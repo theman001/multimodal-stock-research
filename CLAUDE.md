@@ -113,14 +113,16 @@ S&P 지수 계열을 그대로 사용합니다. **S&P 500을 대형/중소형으
 ## 경로 규칙 (`DATA_ROOT`)
 
 - 로컬 개발: 저장소 기준 `./data` (git에는 커밋하지 않음, `.gitignore` 처리됨)
-- Colab 실행: `/content/drive` 존재 여부로 감지 → `/content/drive/MyDrive/주식프로젝트/`
+- Colab 실행: `/content/drive` 존재 여부로 감지 → `/content/drive/MyDrive/주식프로젝트/multimodal-stock-research/`
 - 코드에서는 하드코딩하지 말고 `DATA_ROOT` 환경변수 또는 자동 감지 로직으로 분기할 것
+- **Colab에서는 저장소 자체를 매 세션 GitHub에서 새로 `git clone`하는 것을 기본으로 한다** (Drive FUSE 마운트 위에서 `.git`을 직접 다루면 느리고 불안정함). 즉 저장소 코드는 세션마다 사라져도 되는 휘발성으로 취급하고, **데이터·체크포인트·진행 상태처럼 반드시 남아야 하는 것만 `DATA_ROOT`(Drive)에 둔다.**
 
 ## 진행 로그 프로토콜 (`progress_log.json`)
 
 세션이 중간에 끊겨도(Colab 세션 만료 등) 이어받기가 가능하도록 하는 상태 파일입니다.
 
-- **세션 시작 시 가장 먼저 이 파일을 읽고**, `next_action`부터 이어서 진행할 것. `status: "done"`인 step은 재실행하지 말 것.
+- **파일 위치는 저장소 안이 아니라 `${DATA_ROOT}/progress_log.json`이다.** 저장소는 매 세션 새로 clone될 수 있는 휘발성이므로, 저장소 안에 두면 세션이 끊기는 순간 마지막 상태가 통째로 유실된다. 로컬 개발 시에는 `./data/progress_log.json`.
+- **세션 시작 시 가장 먼저 `${DATA_ROOT}/progress_log.json`을 읽고**, `next_action`부터 이어서 진행할 것. `status: "done"`인 step은 재실행하지 말 것. **파일이 없으면** (최초 실행) 아래 스키마로 새로 생성해서 시작한다.
 - 각 step 완료 시 **원자적으로 갱신**할 것 (임시 파일에 쓰고 rename — 쓰는 도중 세션이 끊겨도 손상된 파일이 남지 않도록).
 - 스키마:
   ```json
