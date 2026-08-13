@@ -109,7 +109,9 @@ def _polarity_indices(id2label: dict[int, str]) -> tuple[int, int]:
 # 윈도우 구성/집계 수식(평균)은 그대로 두고, 추론만 작은 묶음으로 나눠 처리한다 —
 # 결과는 수학적으로 전체를 한 번에 넣은 것과 동일하다(순서만 배치 단위로 나뉠 뿐).
 # GPU는 VRAM이 넉넉하고 병렬 처리량이 커서 CPU용 16보다 훨씬 큰 배치가 유리하다.
-_INFERENCE_BATCH_SIZE = 64 if DEVICE.type == "cuda" else 16
+# L4(24GB VRAM) 기준 128은 BERT-base(fp32, seq_len<=512)에 여유 있게 들어간다 —
+# 윈도우가 수백~천 개인 큰 exhibit 문서일수록 배치가 클수록 이득이 커진다.
+_INFERENCE_BATCH_SIZE = 128 if DEVICE.type == "cuda" else 16
 
 
 @torch.no_grad()

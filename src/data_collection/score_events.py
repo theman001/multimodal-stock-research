@@ -36,6 +36,7 @@ def _write_progress(progress_path: Path | None, market: str, done: int, total: i
         "failed": failed,
         "elapsed_sec": round(time.time() - started, 1),
     }
+    progress_path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = progress_path.with_suffix(".tmp")
     tmp_path.write_text(json.dumps(payload), encoding="utf-8")
     tmp_path.replace(progress_path)
