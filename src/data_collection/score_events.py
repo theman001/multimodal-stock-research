@@ -42,6 +42,20 @@ def _write_progress(progress_path: Path | None, market: str, done: int, total: i
     tmp_path.replace(progress_path)
 
 
+def _load_cached_ids(cache_dir: Path, prefix: str) -> set[str]:
+    """`{cache_dir}/{prefix}{id}.json` 캐시 파일 목록을 한 번에 읽어 id 집합으로 반환한다.
+
+    Google Drive(FUSE 마운트)는 파일 하나마다 존재 확인(stat)을 하면 왕복이
+    느려서(Colab 세션 재연결 직후 실측: 이미 캐시된 200건 확인에 158초) 수천 건
+    규모에서 눈에 띄게 느려진다. 디렉터리 목록 조회 한 번으로 대체하면 파일당
+    개별 `.exists()` 호출을 없앨 수 있다.
+    """
+    if not cache_dir.exists():
+        return set()
+    suffix_len = len(".json")
+    return {p.name[len(prefix) : -suffix_len] for p in cache_dir.glob(f"{prefix}*.json")}
+
+
 def score_events_us(
     data_root: Path | None = None, limit: int | None = None, progress_path: Path | None = None
 ) -> pd.DataFrame:
@@ -51,15 +65,20 @@ def score_events_us(
     if limit:
         events = events.head(limit)
 
+    cache_dir = raw_dir / "events" / "sentiment"
+    cached_ids = _load_cached_ids(cache_dir, "us_")
+
     started = time.time()
     rows = []
     failed = []
     for i, (_, e) in enumerate(events.iterrows(), start=1):
         try:
-            result = score_us_filing(
-                cik=e["cik"], accession_number=e["accessionNumber"], primary_document=e["primaryDocument"], raw_dir=raw_dir
-            )
-            rows.append({"ticker": e["ticker"], "accessionNumber": e["accessionNumber"], **result})
+            accession = e["accessionNumber"]
+            if accession in cached_ids:
+                result = json.loads((cache_dir / f"us_{accession}.json").read_text(encoding="utf-8"))
+            else:
+                result = score_us_filing(cik=e["cik"], accession_number=accession, primary_document=e["primaryDocument"], raw_dir=raw_dir)
+            rows.append({"ticker": e["ticker"], "accessionNumber": accession, **result})
         except Exception as ex:
             failed.append((e["accessionNumber"], str(ex)))
         if i % _PROGRESS_EVERY == 0 or i == len(events):
@@ -89,13 +108,20 @@ def score_events_kr(
     if limit:
         events = events.head(limit)
 
+    cache_dir = raw_dir / "events" / "sentiment"
+    cached_ids = _load_cached_ids(cache_dir, "kr_")
+
     started = time.time()
     rows = []
     failed = []
     for i, (_, e) in enumerate(events.iterrows(), start=1):
         try:
-            result = score_kr_disclosure(rcept_no=e["rcept_no"], raw_dir=raw_dir)
-            rows.append({"ticker": e["ticker"], "rcept_no": e["rcept_no"], **result})
+            rcept_no = e["rcept_no"]
+            if rcept_no in cached_ids:
+                result = json.loads((cache_dir / f"kr_{rcept_no}.json").read_text(encoding="utf-8"))
+            else:
+                result = score_kr_disclosure(rcept_no=rcept_no, raw_dir=raw_dir)
+            rows.append({"ticker": e["ticker"], "rcept_no": rcept_no, **result})
         except Exception as ex:
             failed.append((e["rcept_no"], str(ex)))
         if i % _PROGRESS_EVERY == 0 or i == len(events):
