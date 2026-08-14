@@ -44,19 +44,22 @@ SEC_ARCHIVES_URL = "https://www.sec.gov/Archives/edgar/data/{cik}/{accession_no}
 SEC_ARCHIVES_INDEX_URL = "https://www.sec.gov/Archives/edgar/data/{cik}/{accession_no}/index.json"
 DART_DOCUMENT_URL = "https://opendart.fss.or.kr/api/document.xml"
 
-# 8-K 하나당 primaryDocument + index.json + exhibit 최대 5개 = 최대 7개
-# 요청이 전부 www.sec.gov로 간다. requests.get()을 매번 새로 부르면 요청마다
-# TCP/TLS 핸드셰이크를 새로 맺어서(파일럿 실측 중 일부 filing이 865초까지
-# 걸리는 걸 확인 — 문서 크기(125KB)로는 설명이 안 되는 수준) 지연이 누적된다.
-# Session으로 연결을 재사용(keep-alive)하면 이 오버헤드를 줄일 수 있다.
-_sec_session: requests.Session | None = None
+# SEC/DART 둘 다 같은 호스트로 문서당 여러 번(US는 최대 7번) 요청이 간다.
+# requests.get()을 매번 새로 부르면 요청마다 TCP/TLS 핸드셰이크를 새로 맺어서
+# (파일럿 실측 중 일부 filing이 865초까지 걸리는 걸 확인 — 문서 크기(125KB)로는
+# 설명이 안 되는 수준) 지연이 누적된다. Session으로 연결을 재사용(keep-alive)
+# 하면 이 오버헤드를 줄일 수 있다 — requests.Session은 호스트별로 커넥션 풀을
+# 따로 관리하므로 SEC/DART가 같은 Session 객체를 공유해도 문제없다. (최초
+# US 쪽만 이 최적화를 적용했다가 KR/DART 쪽은 빠뜨려서 뒤늦게 발견 — KR
+# 실행이 눈에 띄게 느린 원인 중 하나였다.)
+_session: requests.Session | None = None
 
 
-def _get_sec_session() -> requests.Session:
-    global _sec_session
-    if _sec_session is None:
-        _sec_session = requests.Session()
-    return _sec_session
+def _get_session() -> requests.Session:
+    global _session
+    if _session is None:
+        _session = requests.Session()
+    return _session
 _REQUEST_DELAY_SECONDS = 0.15
 _STATUS_NO_FILE = "014"  # "파일이 존재하지 않습니다" — 에러가 아니라 정상 케이스
 _TEXT_EXTENSIONS = (".htm", ".html", ".txt")
@@ -142,7 +145,7 @@ def fetch_us_filing_text(
 
     headers = {"User-Agent": _sec_user_agent()}
     accession_no = accession_number.replace("-", "")
-    session = _get_sec_session()
+    session = _get_session()
 
     def _fetch_one(filename: str) -> str:
         url = SEC_ARCHIVES_URL.format(cik=cik, accession_no=accession_no, filename=filename)
@@ -193,7 +196,8 @@ def fetch_kr_disclosure_text(rcept_no: str, raw_dir: Path, force: bool = False) 
         return cache_path.read_text(encoding="utf-8")
 
     api_key = _dart_api_key()
-    resp = requests.get(DART_DOCUMENT_URL, params={"crtfc_key": api_key, "rcept_no": rcept_no}, timeout=30)
+    session = _get_session()
+    resp = session.get(DART_DOCUMENT_URL, params={"crtfc_key": api_key, "rcept_no": rcept_no}, timeout=30)
     resp.raise_for_status()
     time.sleep(_REQUEST_DELAY_SECONDS)
 
