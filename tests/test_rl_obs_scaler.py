@@ -18,6 +18,7 @@ def _make_panel(dates: list[str], tickers: list[str], features: np.ndarray, vali
         features=features,
         close=np.ones(valid_mask.shape, dtype=np.float32),
         valid_mask=valid_mask,
+        market_id=np.zeros(len(tickers), dtype=np.int64),
     )
 
 

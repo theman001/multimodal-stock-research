@@ -45,6 +45,11 @@ class Panel:
     features: np.ndarray  # (T, N, D_static) float32
     close: np.ndarray  # (T, N) float32, 해당 (date,ticker)에 유효한 row가 없으면 NaN
     valid_mask: np.ndarray  # (T, N) float32(0.0/1.0) — features[..., -1]과 동일한 값
+    market_id: np.ndarray  # (N,) int64, 티커별 고정 시장 코드(0=US,1=KR).
+    # features[..., market_id_idx]도 같은 정보를 담지만 그건 날짜별 그리드라
+    # 마스킹된(0-채움) 행에서 읽으면 진짜 값 대신 0(US처럼 보임)이 나온다 —
+    # trading_env.py의 거래비용 계산처럼 "그 티커가 어느 시장인지"가 마스킹
+    # 여부와 무관하게 항상 정확해야 하는 곳에선 이 필드를 써야 한다.
 
 
 def static_feature_names(include_event_features: bool) -> list[str]:
@@ -134,6 +139,8 @@ def build_grid(
     close_full = close_indexed.reindex(full_index)
     close_grid = close_full.to_numpy(dtype=np.float32).reshape(n_dates, n_tickers)
 
+    market_id_array = _ticker_market_ids(features_df, tickers)
+
     return Panel(
         dates=dates,
         tickers=list(tickers),
@@ -141,7 +148,22 @@ def build_grid(
         features=features_grid,
         close=close_grid,
         valid_mask=valid_mask_grid,
+        market_id=market_id_array,
     )
+
+
+def _ticker_market_ids(features_df: pd.DataFrame, tickers: list[str]) -> np.ndarray:
+    """티커별 market_id를 날짜 그리드와 무관하게(마스킹에 영향받지 않게) 구한다.
+
+    features[..., market_id_idx]는 그 날짜의 row가 없으면 0으로 채워지므로,
+    하필 그 티커가 마스킹된 행에서 market_id를 읽으면 실제로 KR(1)인 티커가
+    US(0)처럼 보이는 오류가 생길 수 있다 — 이 함수는 그 문제를 원천 차단한다.
+    """
+    per_ticker = features_df.groupby("ticker")["market_id"]
+    if not per_ticker.nunique().eq(1).all():
+        raise ValueError("일부 티커의 market_id가 시점에 따라 다름 — 예상치 못한 데이터")
+    lookup = per_ticker.first()
+    return lookup.reindex(tickers).to_numpy(dtype=np.int64)
 
 
 def build_panel(data_root: Path | None = None, include_event_features: bool = True) -> Panel:

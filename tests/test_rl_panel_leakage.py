@@ -142,3 +142,47 @@ def test_ticker_universe_round_trip(tmp_path):
     save_ticker_universe(tickers, tmp_path)
     loaded = load_ticker_universe(tmp_path)
     assert loaded == tickers
+
+
+def test_market_id_is_correct_even_when_ticker_masked_on_every_sampled_row():
+    """KRX 티커(market_id=1)가 특정 날짜에 마스킹되면 features[...,market_id_idx]는
+    0-채움돼 US처럼 보인다 — Panel.market_id는 그 그리드가 아니라 원본
+    features_df에서 직접 구해야 하므로 이 함정에 걸리면 안 된다."""
+    rows = [
+        {"date": "2024-01-01", "ticker": "KRX1", "market_id": 1, "prob": 0.5},
+        {"date": "2024-01-02", "ticker": "OTHER", "market_id": 0, "prob": 0.5},
+        # KRX1은 2024-01-02에 row가 없음 -> 그 날 grid상 market_id 채널은 0-채움됨
+    ]
+    features_df = _synthetic_features_df(rows)
+    tickers = ["KRX1", "OTHER"]
+    ohlcv_df = _synthetic_ohlcv_df(
+        [
+            {"date": "2024-01-01", "ticker": "KRX1", "close": 100.0},
+            {"date": "2024-01-02", "ticker": "OTHER", "close": 50.0},
+        ]
+    )
+    panel = build_grid(features_df, ohlcv_df, tickers)
+
+    krx1_idx = panel.tickers.index("KRX1")
+    market_id_channel_idx = panel.feature_names.index("market_id")
+
+    # 그리드 자체는(마스킹된 행이라) 0으로 채워져 있어야 정상 — 이게 함정임을 재확인
+    assert panel.features[1, krx1_idx, market_id_channel_idx] == 0.0
+    # 하지만 Panel.market_id는 마스킹과 무관하게 진짜 값(1=KR)을 가져야 한다
+    assert panel.market_id[krx1_idx] == 1
+
+
+def test_market_id_inconsistent_across_dates_raises():
+    rows = [
+        {"date": "2024-01-01", "ticker": "AAA", "market_id": 0, "prob": 0.5},
+        {"date": "2024-01-02", "ticker": "AAA", "market_id": 1, "prob": 0.5},
+    ]
+    features_df = _synthetic_features_df(rows)
+    ohlcv_df = _synthetic_ohlcv_df(
+        [
+            {"date": "2024-01-01", "ticker": "AAA", "close": 100.0},
+            {"date": "2024-01-02", "ticker": "AAA", "close": 100.0},
+        ]
+    )
+    with pytest.raises(ValueError):
+        build_grid(features_df, ohlcv_df, ["AAA"])

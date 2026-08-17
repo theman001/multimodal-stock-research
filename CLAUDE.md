@@ -229,7 +229,7 @@ SB3의 `VecNormalize`는 기본적으로 온라인으로 통계를 갱신하는�
 ## Phase 3 Definition of Done
 
 - [x] `src/rl/panel.py` + `obs_scaler.py` 구현, 누수 검증 유닛테스트(`tests/test_rl_panel_leakage.py`, `tests/test_rl_obs_scaler.py`) 통과 — 실제 데이터로 `build_panel()` 실행 검증 완료(2026-08-17)
-- [ ] `src/rl/trading_env.py`(Gymnasium 환경) 구현, reset/step/비용/강제청산 로직 유닛테스트(`tests/test_trading_env.py`) 통과
+- [x] `src/rl/trading_env.py`(Gymnasium 환경) 구현, reset/step/비용/강제청산 로직 유닛테스트(`tests/test_trading_env.py`) 통과 — 실제 120종목 패널로 무작위 정책 스모크 테스트 + all-HOLD NAV 불변 검증 완료(2026-08-17)
 - [ ] PPO 학습 파이프라인(`src/rl/train_agent.py`) 구현, CPU 파일럿으로 학습 가능성 확인(필요시 Colab GPU 전환)
 - [ ] Walk-forward 5폴드 + 공식 단일분할(test.parquet 구간) 평가 완료, Phase 1 분류기 전략/랜덤워크/Buy&Hold 대비 비교 리포트 작성(paired bootstrap 포함)
 - [ ] `progress_log.json` 갱신, `next_action`이 "Phase 3 결과 확인 후 Phase 4 착수 여부 사용자 확인 대기"로 갱신
