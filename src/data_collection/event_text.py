@@ -79,8 +79,24 @@ _XBRL_VIEWER_PATTERN = re.compile(r"^R\d+\.htm$", re.IGNORECASE)  # XBRL 자동�
 _SEC_SYSTEM_FILE_PATTERN = re.compile(r"^\d{10}-\d{2}-\d{6}(\.txt|-index(-headers)?\.html?)$", re.IGNORECASE)
 
 
+_XML_DECLARATION_PATTERN = re.compile(r"^\s*<\?xml[^>]*\?>")
+
+
 def _html_to_text(raw_html: str | bytes) -> str:
-    """HTML에서 script/style을 제거하고 순수 텍스트만 추출, 공백을 정규화한다."""
+    """HTML에서 script/style을 제거하고 순수 텍스트만 추출, 공백을 정규화한다.
+
+    DART 문서 중 일부는 원문 자체가 `<?xml version="1.0" encoding="euc-kr"?>`
+    로 시작한다. 이미 우리가 EUC-KR로 디코딩해서 파이썬 str로 넘기는데, 그
+    str 안에 인코딩 선언이 남아있으면 lxml이 "이미 유니코드인데 인코딩
+    선언이 있는 건 모순"이라며 파싱을 거부한다(Colab 전체 실행 중 실제로
+    KR 22,490건 중 1,009건이 이 에러로 실패하는 걸 확인:
+    `ValueError: Unicode strings with encoding declaration are not
+    supported`). 인코딩은 이미 올바르게 적용됐으니 선언 줄만 제거하면 된다
+    — 다시 디코딩하는 게 아니라 이미 디코딩된 텍스트에서 모순되는 선언
+    문구만 지우는 것.
+    """
+    if isinstance(raw_html, str):
+        raw_html = _XML_DECLARATION_PATTERN.sub("", raw_html, count=1)
     doc = lxml_html.fromstring(raw_html)
     for bad in doc.xpath("//script | //style"):
         bad.getparent().remove(bad)

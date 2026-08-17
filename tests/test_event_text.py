@@ -28,6 +28,23 @@ def test_html_to_text_normalizes_whitespace():
     assert _html_to_text(html) == "Line1 Line2"
 
 
+def test_html_to_text_strips_xml_declaration_from_already_decoded_string():
+    """DART 문서 중 일부는 EUC-KR로 디코딩된 str 안에 여전히
+    '<?xml ... encoding="euc-kr"?>' 선언이 남아있다. lxml은 이미 유니코드인
+    문자열에 인코딩 선언이 있으면 모순이라며 ValueError를 던진다(Colab 전체
+    실행에서 KR 22,490건 중 1,009건이 실제로 이 에러로 실패한 걸 확인) —
+    선언 줄만 제거하면 정상 파싱돼야 한다."""
+    html = '<?xml version="1.0" encoding="euc-kr"?><html><body><p>공시 내용</p></body></html>'
+    assert _html_to_text(html) == "공시 내용"
+
+
+def test_html_to_text_handles_bytes_with_xml_declaration_unaffected():
+    """bytes 입력은 애초에 이 문제가 없다(lxml이 선언을 보고 스스로 디코딩) —
+    str 전용 처리가 bytes 경로를 건드리지 않는지 확인."""
+    raw = '<?xml version="1.0" encoding="utf-8"?><html><body><p>Hello</p></body></html>'.encode("utf-8")
+    assert _html_to_text(raw) == "Hello"
+
+
 def test_html_to_text_handles_sgml_wrapped_document():
     """SEC EDGAR 응답은 <DOCUMENT><TYPE>8-K...<TEXT><HTML>...로 감싸져 있다
     (실제 응답으로 확인) — lxml이 이런 비표준 래핑도 문제없이 처리해야 한다."""
