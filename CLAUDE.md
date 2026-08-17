@@ -15,14 +15,14 @@
 
 **최종 목표는 스스로 매수/매도/보유를 판단하는 AI Agent입니다.** 그 판단의 기반이 되는 신호를 Phase 1~2에서 통계적으로 검증하는 것이 지금 단계의 목적입니다: 단순 가격 예측이 아니라 "시장 분류 × 기업 규모 카테고리에 따라 기술적 지표와 뉴스 이벤트의 통계적 유의성이 어떻게 달라지는가"를 검증하는 리서치 파이프라인입니다. 데이터셋을 케이스별로 쪼개서 각개 학습시키지 않고, 하나의 데이터셋에 `Market_Id`(국내/해외), `Size_Id`(대형/중형/소형) **메타 특성**을 주입해 조건부 연관성을 학습시키는 것이 핵심 사상입니다.
 
-## 전체 로드맵과 현재 스코프: Phase 2 진행 중
+## 전체 로드맵과 현재 스코프: Phase 3 설계 확정, 구현 착수는 별도 승인 대기
 
 - **Phase 1 (완료, 2026-08-12 사용자 승인)**: 차트 중심 조건부 연결 학습 MVP — 데이터 수집, 메타 태그 결합, 누수 없는 시계열 분할/학습, 수수료·슬리피지 반영 백테스팅. 산출물은 "익일 등락 확률" 신호(model_v3). walk-forward CV·하이퍼파라미터 탐색으로 51~53% 방향성 정확도가 기술지표 기반 신호의 현실적 천장임을 확인.
-- **Phase 2 (현재, 2026-08-12 사용자 승인 "Phase2로 넘어가자")**: 뉴스/이벤트 신호 융합. 상세 사양은 아래 "Phase 2 구체 사양" 및 `plan/08_phase2_news_events.md` 참고.
-- **Phase 3 (금지 — 아직 계획도 상세화하지 말 것)**: RL 트레이딩 에이전트 — Phase 1의 확률 신호 + Phase 2의 해석을 state로 받아 매수/매도/보유 정책을 학습하는 signal-conditioned RL. 원본 차트/뉴스로 처음부터 학습하는 end-to-end RL이 아님 — 이미 검증된 신호 위에서 학습하므로 순수 RL보다 다루기 쉬운 구조로 설계할 것. Phase 2 완료 후 착수
+- **Phase 2 (완료, 2026-08-17)**: 뉴스/이벤트 신호 융합. Definition of Done 전 항목 충족(모듈 1~5). 이벤트/감성 피처를 추가해도 XGBoost 익일 방향성 예측은 노이즈 수준 이상 개선되지 않는다는 결론(`data/reports/phase2_retraining_comparison_report.md`) — model_v3(13피처)를 공식 산출물로 유지. 상세 사양은 `plan/08_phase2_news_events.md` 참고.
+- **Phase 3 (설계 확정, 2026-08-17 사용자 승인 "Phase3는 구체적인 계획을 먼저 세우자" — 코드 구현은 이 설계에 대한 별도 승인 필요)**: RL 트레이딩 에이전트 — Phase 1의 확률 신호 + Phase 2의 이벤트 신호를 state로 받아 120종목 포트폴리오 전체의 매수/매도/보유 정책을 PPO로 학습하는 signal-conditioned RL. 상세 사양은 아래 "Phase 3 구체 사양" 및 `plan/09_phase3_rl_agent_design.md` 참고.
 - **Phase 4 (금지, 필요시에만)**: 실시간 운영 루프. 학습과 별개의 배포 문제로 취급하고 Phase 3 이후 별도 승인 하에 진행
 
-각 Phase는 이전 Phase의 Definition of Done을 충족하고 사용자가 명시적으로 승인해야 다음으로 진행한다. Phase 3/4의 코드나 상세 설계는 아직 미리 만들지 않는다 — 스코프 확장은 반드시 사용자 지시로만 시작한다.
+각 Phase는 이전 Phase의 Definition of Done을 충족하고 사용자가 명시적으로 승인해야 다음으로 진행한다. Phase 4의 코드나 상세 설계는 아직 미리 만들지 않는다. Phase 3는 설계 문서까지는 확정했지만, `src/rl/` 코드·`requirements.txt` 변경·모델 학습 등 실제 구현은 사용자의 별도 승인이 있어야 시작한다 — 스코프 확장은 반드시 사용자 지시로만 시작한다.
 
 ## 환경 설정
 
@@ -194,6 +194,45 @@ S&P 지수 계열을 그대로 사용합니다. **S&P 500을 대형/중소형으
 - [x] 이벤트 피처 집계, 기존 `features.parquet`과 병합 (모듈 4) — 상세 내역은 `data/reports/phase2_event_feature_engineering_report.md` 참고
 - [x] 이벤트 피처 포함 재학습을 walk-forward CV로 Phase 1 베이스라인과 비교, 리포트 작성(개선이 노이즈 수준이면 미채택도 유효한 결론) — 결론: 노이즈 수준 차이, 미채택. 상세 내역은 `data/reports/phase2_retraining_comparison_report.md` 참고
 - [x] `progress_log.json` 갱신, `next_action`이 "Phase 2 결과 확인 후 Phase 3 착수 여부 사용자 확인 대기"로 갱신
+
+## Phase 3 구체 사양 (2026-08-17 설계 확정 — 코드 구현은 별도 승인 필요, 상세 근거는 `plan/09_phase3_rl_agent_design.md`)
+
+**핵심 결정 (미정 항목 확정)**: 처음부터 120종목 전체 포트폴리오 에이전트(단일종목 MVP 아님) / 이산 매수·매도·보유(포지션 사이징은 v1 범위 밖) / 이벤트·감성 피처를 state에 포함(모듈 5의 분류 무용 결과와 별개로 RL엔 다르게 쓰일 수 있다는 가설, ablation으로 추후 검증) / PPO(`stable-baselines3==2.9.0` + `gymnasium==1.3.0`, 이 저장소 Python 3.14 venv에서 설치 가능함을 dry-run으로 확인).
+
+### 관측(observation) 공간
+`gymnasium.spaces.Box(shape=(120*D + 4,))`. 티커별 블록(D=20, 이벤트 피처 포함 시 24) = `BASE_FEATURE_COLUMNS`(13) + `model_v3` P(up)(1, 오프라인 배치 계산, env.step()마다 재추론 안 함) + `EVENT_FEATURE_COLUMNS`(0/4, 생성자 플래그로 토글) + `market_id`/`size_id`(각 1) + `holding_flag`/`unrealized_return`/`position_weight`(각 1, env 계산) + `valid_mask`(1). 포트폴리오 스칼라 4개(`cash_weight`, `nav_ratio`, `n_positions_held/120`, `step_frac`) 추가. 티커 순서는 `${DATA_ROOT}/checkpoints/rl_ticker_universe.json`에 고정 저장(`MARKET_ID_CATEGORIES`/`SIZE_ID_CATEGORIES`와 동일한 이유). 그 날 row가 없는 티커는 0-채움 + `valid_mask=0`(forward-fill 금지 — 암묵적 정보 누수 방지). `MAX_REALIZED_RETURN_GAP_DAYS=10`(`simulate.py`, 재사용) 넘게 마스킹되면 마지막 유효가로 강제 청산.
+
+### 행동(action) 공간
+`gymnasium.spaces.MultiDiscrete([3]*120)`, 티커별 독립 3지 선택(`SELL=0, HOLD=1, BUY=2`), 고정 티커 순서, 롱 온리.
+
+### 자본배분
+NAV 무차원(1.0 시작). 그 스텝 BUY 신호 중 미보유 티커만 대상으로 `equal_share = 가용현금/len(buy_tickers)`, 종목당 `min(equal_share, MAX_POSITION_WEIGHT)`(기본 0.05, 파라미터화). 캡으로 남는 현금은 재분배 안 함(보수적). 보유 중 BUY는 no-op, SELL은 전량 청산만. 에피소드 마지막 스텝은 행동과 무관하게 강제 전량 청산.
+
+### 보상 함수
+학습 신호 `reward_t = ln(NAV_{t+1}/NAV_t)`. 리포트용 지표는 `simulate.py::cumulative_return()`에 그대로 통과. **비용은 `simulate.py`처럼 매일 부과하지 않고 포지션을 열 때/닫을 때만** `round_trip_cost_for_market()`(`costs.py`, 요율 재사용)의 절반씩 부과 — 진입→청산 사이클 총비용은 Phase 1과 동일하게 유지, 타이밍만 다름(RL은 진짜 포지션 상태가 있으므로).
+
+### 에피소드/평가
+학습은 `EPISODE_LENGTH_DAYS=252`, 폴드 train 구간 내 무작위 시작(embargo 침범 방지 가드 포함). 평가는 결정적 단일 패스. `generate_walk_forward_folds()`(`walk_forward.py`, 그대로 재사용)로 5폴드 정의, 폴드마다 새로 학습. 공식 헤드라인 비교는 `train.parquet`/`test.parquet`(2024-06-25~2026-08-07, `backtest_report_v3.md`와 동일 구간)에서 별도로 1회.
+
+### 파일 레이아웃 (제안)
+`src/rl/{panel,obs_scaler,trading_env,train_agent,evaluate}.py`, `tests/test_trading_env.py`, `tests/test_rl_panel_leakage.py`.
+
+### RL 특화 누수 주의사항 (가장 비자명한 것 하나)
+SB3의 `VecNormalize`는 기본적으로 온라인으로 통계를 갱신하는데, 평가 중에도 켜두면 이전 결정에 이후 타임스텝 정보가 섞여든다 — `scaling.py`의 "Train에만 fit" 원칙을 `obs_scaler.py`에도 그대로 적용해 평가 중엔 고정 스케일러만 사용.
+
+### 평가/비교
+`test.parquet` 구간에서 RL 정책 vs `backtest_report_v3.md`의 분류기 전략(재계산 없이 인용) vs 랜덤워크/Buy&Hold(재사용) 비교. 두 전략의 일별수익률 *차이*에 대한 paired bootstrap이 새로 필요 → `significance.py`에 `paired_bootstrap_return_diff_ci()` 추가 제안. **미해결로 명시**: 기존 6셀 Bonferroni 독립 검정은 공동 현금 제약이 있는 포트폴리오 정책엔 독립성 가정이 깨져 그대로 재사용 불가 — 실제 리포트 작성 시점에 별도 판단.
+
+### 연산 자원
+로컬 CPU 파일럿 우선, 벽시계 시간 감당 안 되면 기존 Colab GPU 워크플로(디바이스 자동감지 패턴) 그대로 적용.
+
+## Phase 3 Definition of Done
+
+- [ ] `src/rl/panel.py` + `obs_scaler.py` 구현, 누수 검증 유닛테스트(`tests/test_rl_panel_leakage.py`) 통과
+- [ ] `src/rl/trading_env.py`(Gymnasium 환경) 구현, reset/step/비용/강제청산 로직 유닛테스트(`tests/test_trading_env.py`) 통과
+- [ ] PPO 학습 파이프라인(`src/rl/train_agent.py`) 구현, CPU 파일럿으로 학습 가능성 확인(필요시 Colab GPU 전환)
+- [ ] Walk-forward 5폴드 + 공식 단일분할(test.parquet 구간) 평가 완료, Phase 1 분류기 전략/랜덤워크/Buy&Hold 대비 비교 리포트 작성(paired bootstrap 포함)
+- [ ] `progress_log.json` 갱신, `next_action`이 "Phase 3 결과 확인 후 Phase 4 착수 여부 사용자 확인 대기"로 갱신
 
 ## 관련 스킬
 
