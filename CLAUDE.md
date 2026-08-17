@@ -190,7 +190,8 @@ S&P 지수 계열을 그대로 사용합니다. **S&P 500을 대형/중소형으
 
 - [x] KR(DART)/US(EDGAR) ticker↔corp_code/CIK 매핑 완료, 120종목 커버리지 확인
 - [x] 이벤트 원문 수집 + raw 캐싱(KR 22,490건/US 7,944건), 타임스탬프 정렬 규칙 구현 + 누수 검증 유닛테스트 통과 — 검증 라운드는 `data/reports/phase2_event_collection_report.md` 참고
-- [ ] 감성 스코어링 + 이벤트 피처 집계, 기존 `features.parquet`과 병합
+- [x] 감성 스코어링(US 7,944건/KR 22,490건 전체, FinBERT/KR-FinBERT + 문장 단위 슬라이딩 윈도우) — 검증 내역은 `data/reports/phase2_sentiment_scoring_report.md` 참고
+- [ ] 이벤트 피처 집계, 기존 `features.parquet`과 병합 (모듈 4 — 사용자 별도 승인 후 착수)
 - [ ] 이벤트 피처 포함 재학습을 walk-forward CV로 Phase 1 베이스라인과 비교, 리포트 작성(개선이 노이즈 수준이면 미채택도 유효한 결론)
 - [ ] `progress_log.json` 갱신, `next_action`이 "Phase 2 결과 확인 후 Phase 3 착수 여부 사용자 확인 대기"로 갱신
 
