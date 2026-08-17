@@ -97,7 +97,7 @@ def compute_features(ohlcv: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-FEATURE_COLUMNS = [
+BASE_FEATURE_COLUMNS = [
     "ma5_ratio",
     "ma20_ratio",
     "ma60_ratio",
@@ -112,3 +112,16 @@ FEATURE_COLUMNS = [
     "momentum20",
     "momentum60",
 ]
+
+# Phase 2 모듈 4 — 이벤트 피처(src/features/event_features.py에서 계산, ticker+date
+# 기준으로 features.parquet에 병합됨). compute_features()는 여기 관여하지 않는다 —
+# 이 목록은 순전히 다운스트림(모델 학습 파이프라인)이 참조할 컬럼 이름 registry.
+EVENT_FEATURE_COLUMNS = [
+    "event_count_5d",
+    "event_sentiment_latest",
+    "event_sentiment_mean5d",
+    "days_since_last_event",
+]
+
+# 모델 학습 파이프라인이 쓰는 최종 피처 목록 (기술지표 13개 + 이벤트 4개 = 17개).
+FEATURE_COLUMNS = BASE_FEATURE_COLUMNS + EVENT_FEATURE_COLUMNS

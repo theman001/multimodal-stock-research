@@ -15,7 +15,8 @@ import numpy as np
 import pandas as pd
 
 from src.config import get_data_root
-from src.features.indicators import FEATURE_COLUMNS, compute_features
+from src.features.indicators import BASE_FEATURE_COLUMNS as FEATURE_COLUMNS
+from src.features.indicators import compute_features
 
 OUTPUT_COLUMNS = [
     "date",

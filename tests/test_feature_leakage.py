@@ -5,7 +5,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.features.indicators import FEATURE_COLUMNS, compute_features
+from src.features.indicators import BASE_FEATURE_COLUMNS as FEATURE_COLUMNS
+from src.features.indicators import compute_features
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FEATURES_SRC_DIR = REPO_ROOT / "src" / "features"
