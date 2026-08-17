@@ -66,16 +66,21 @@ def score_events_us(
         events = events.head(limit)
 
     cache_dir = raw_dir / "events" / "sentiment"
+    cache_load_t0 = time.time()
     cached_ids = _load_cached_ids(cache_dir, "us_")
+    print(f"[score_events_us] 캐시 목록 조회: {len(cached_ids)}건, {round(time.time() - cache_load_t0, 1)}s")
 
     started = time.time()
     rows = []
     failed = []
+    cache_read_time = 0.0
     for i, (_, e) in enumerate(events.iterrows(), start=1):
         try:
             accession = e["accessionNumber"]
             if accession in cached_ids:
+                t0 = time.time()
                 result = json.loads((cache_dir / f"us_{accession}.json").read_text(encoding="utf-8"))
+                cache_read_time += time.time() - t0
             else:
                 result = score_us_filing(cik=e["cik"], accession_number=accession, primary_document=e["primaryDocument"], raw_dir=raw_dir)
             rows.append({"ticker": e["ticker"], "accessionNumber": accession, **result})
@@ -83,7 +88,7 @@ def score_events_us(
             failed.append((e["accessionNumber"], str(ex)))
         if i % _PROGRESS_EVERY == 0 or i == len(events):
             _write_progress(progress_path, "us", i, len(events), len(failed), started)
-            print(f"[score_events_us] {i}/{len(events)} 처리 (실패 {len(failed)}건, {round(time.time() - started, 1)}s 경과)")
+            print(f"[score_events_us] {i}/{len(events)} 처리 (실패 {len(failed)}건, {round(time.time() - started, 1)}s 경과, 캐시읽기 누적 {round(cache_read_time, 1)}s)")
 
     if failed:
         print(f"[score_events_us] 실패 {len(failed)}건 (스킵, 원문/캐시 없으면 다음 실행 시 재시도됨): {failed[:10]}{'...' if len(failed) > 10 else ''}")
@@ -109,16 +114,21 @@ def score_events_kr(
         events = events.head(limit)
 
     cache_dir = raw_dir / "events" / "sentiment"
+    cache_load_t0 = time.time()
     cached_ids = _load_cached_ids(cache_dir, "kr_")
+    print(f"[score_events_kr] 캐시 목록 조회: {len(cached_ids)}건, {round(time.time() - cache_load_t0, 1)}s")
 
     started = time.time()
     rows = []
     failed = []
+    cache_read_time = 0.0
     for i, (_, e) in enumerate(events.iterrows(), start=1):
         try:
             rcept_no = e["rcept_no"]
             if rcept_no in cached_ids:
+                t0 = time.time()
                 result = json.loads((cache_dir / f"kr_{rcept_no}.json").read_text(encoding="utf-8"))
+                cache_read_time += time.time() - t0
             else:
                 result = score_kr_disclosure(rcept_no=rcept_no, raw_dir=raw_dir)
             rows.append({"ticker": e["ticker"], "rcept_no": rcept_no, **result})
@@ -126,7 +136,7 @@ def score_events_kr(
             failed.append((e["rcept_no"], str(ex)))
         if i % _PROGRESS_EVERY == 0 or i == len(events):
             _write_progress(progress_path, "kr", i, len(events), len(failed), started)
-            print(f"[score_events_kr] {i}/{len(events)} 처리 (실패 {len(failed)}건, {round(time.time() - started, 1)}s 경과)")
+            print(f"[score_events_kr] {i}/{len(events)} 처리 (실패 {len(failed)}건, {round(time.time() - started, 1)}s 경과, 캐시읽기 누적 {round(cache_read_time, 1)}s)")
 
     if failed:
         print(f"[score_events_kr] 실패 {len(failed)}건 (스킵, 원문/캐시 없으면 다음 실행 시 재시도됨): {failed[:10]}{'...' if len(failed) > 10 else ''}")
