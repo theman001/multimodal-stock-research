@@ -130,7 +130,10 @@ def score_events_kr(
                 result = json.loads((cache_dir / f"kr_{rcept_no}.json").read_text(encoding="utf-8"))
                 cache_read_time += time.time() - t0
             else:
+                print(f"[score_events_kr] 캐시 미스 - 신규 처리 중: rcept_no={rcept_no} ({i}번째)", flush=True)
+                fetch_t0 = time.time()
                 result = score_kr_disclosure(rcept_no=rcept_no, raw_dir=raw_dir)
+                print(f"[score_events_kr] rcept_no={rcept_no} 처리 완료 ({round(time.time() - fetch_t0, 1)}s)", flush=True)
             rows.append({"ticker": e["ticker"], "rcept_no": rcept_no, **result})
         except Exception as ex:
             failed.append((e["rcept_no"], str(ex)))
