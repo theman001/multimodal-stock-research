@@ -172,6 +172,21 @@ def test_market_id_is_correct_even_when_ticker_masked_on_every_sampled_row():
     assert panel.market_id[krx1_idx] == 1
 
 
+def test_dates_are_proper_datetime64_not_object_array():
+    """np.array(sorted(...))가 Timestamp 리스트를 dtype=object로 만들어버리면
+    obs_scaler.fit_obs_scaler의 `panel.dates <= cutoff` 비교가 조용히 깨진다
+    (실 데이터로 실제로 겪은 버그) — panel.dates는 반드시 datetime64[ns]여야 한다."""
+    rows = [{"date": "2024-01-01", "ticker": "AAA", "prob": 0.5}]
+    features_df = _synthetic_features_df(rows)
+    ohlcv_df = _synthetic_ohlcv_df([{"date": "2024-01-01", "ticker": "AAA", "close": 100.0}])
+
+    panel = build_grid(features_df, ohlcv_df, ["AAA"])
+
+    assert panel.dates.dtype == np.dtype("datetime64[ns]")
+    cutoff = pd.Timestamp(panel.dates[0]).to_datetime64()
+    assert (panel.dates <= cutoff).sum() == 1  # 비교 연산이 예외 없이 동작해야 함
+
+
 def test_market_id_inconsistent_across_dates_raises():
     rows = [
         {"date": "2024-01-01", "ticker": "AAA", "market_id": 0, "prob": 0.5},

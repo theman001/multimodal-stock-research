@@ -230,7 +230,7 @@ SB3의 `VecNormalize`는 기본적으로 온라인으로 통계를 갱신하는�
 
 - [x] `src/rl/panel.py` + `obs_scaler.py` 구현, 누수 검증 유닛테스트(`tests/test_rl_panel_leakage.py`, `tests/test_rl_obs_scaler.py`) 통과 — 실제 데이터로 `build_panel()` 실행 검증 완료(2026-08-17)
 - [x] `src/rl/trading_env.py`(Gymnasium 환경) 구현, reset/step/비용/강제청산 로직 유닛테스트(`tests/test_trading_env.py`) 통과 — 실제 120종목 패널로 무작위 정책 스모크 테스트 + all-HOLD NAV 불변 검증 완료(2026-08-17)
-- [ ] PPO 학습 파이프라인(`src/rl/train_agent.py`) 구현, CPU 파일럿으로 학습 가능성 확인(필요시 Colab GPU 전환)
+- [x] PPO 학습 파이프라인(`src/rl/train_agent.py`) 구현, CPU 파일럿으로 학습 가능성 확인(필요시 Colab GPU 전환) — 파일럿 결과 병목은 환경이 아니라 정책망 추론(배치크기 1 순차 추론). `train_policy(n_envs=N)`로 DummyVecEnv 배치화 적용, 로컬 4코어 기준 n_envs=8에서 2.59배 개선(36.01→13.90ms/step, 2026-08-17). 전체 5폴드+공식분할 실학습(약 11.6시간 추정) 착수는 사용자 확인 후 진행
 - [ ] Walk-forward 5폴드 + 공식 단일분할(test.parquet 구간) 평가 완료, Phase 1 분류기 전략/랜덤워크/Buy&Hold 대비 비교 리포트 작성(paired bootstrap 포함)
 - [ ] `progress_log.json` 갱신, `next_action`이 "Phase 3 결과 확인 후 Phase 4 착수 여부 사용자 확인 대기"로 갱신
 

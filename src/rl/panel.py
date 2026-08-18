@@ -113,7 +113,12 @@ def build_grid(
     names = static_feature_names(include_event_features)
     value_cols = [c for c in names if c != "valid_mask"]
 
-    dates = np.array(sorted(features_df["date"].unique()))
+    # np.array(sorted(...))는 pandas Timestamp의 리스트를 dtype=object 배열로
+    # 만들어버릴 수 있다(datetime64[ns]가 아니게 됨) — 그러면 이후
+    # obs_scaler.fit_obs_scaler의 `panel.dates <= cutoff` 같은 비교가 조용히
+    # 깨진다(실제로 실 데이터로 겪은 버그). pd.DatetimeIndex로 명시 변환해 확실히
+    # datetime64[ns] 배열이 되게 한다.
+    dates = pd.DatetimeIndex(sorted(features_df["date"].unique())).to_numpy()
     full_index = pd.MultiIndex.from_product([dates, tickers], names=["date", "ticker"])
 
     feat_indexed = features_df.set_index(["date", "ticker"])[value_cols]
