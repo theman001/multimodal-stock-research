@@ -5,6 +5,7 @@ from src.models.split import split_train_test
 from src.models.walk_forward import generate_walk_forward_folds
 from src.rl.panel import Panel
 from src.rl.train_agent import (
+    _checkpoint_exists,
     date_to_idx,
     load_checkpoint,
     official_split_indices,
@@ -127,3 +128,21 @@ def test_save_and_load_checkpoint_round_trip(tmp_path):
     action_loaded, _ = loaded_model.predict(obs, deterministic=True)
     np.testing.assert_array_equal(action_original, action_loaded)
     assert np.allclose(loaded_scaler.mean_, scaler.mean_)
+
+
+def test_checkpoint_exists_detects_presence_and_absence(tmp_path):
+    assert not _checkpoint_exists(tmp_path, "rl_policy_fold1")
+
+    panel = _make_panel(40, n_tickers=3)
+    model, scaler = train_policy(
+        panel,
+        train_end_idx=30,
+        total_timesteps=32,
+        episode_length_days=10,
+        seed=0,
+        ppo_params={"n_steps": 16, "batch_size": 8},
+    )
+    save_checkpoint(model, scaler, tmp_path, "rl_policy_fold1", {"fold": 1})
+
+    assert _checkpoint_exists(tmp_path, "rl_policy_fold1")
+    assert not _checkpoint_exists(tmp_path, "rl_policy_fold2")

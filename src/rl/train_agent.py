@@ -144,6 +144,10 @@ def load_checkpoint(checkpoints_dir: Path, name: str) -> tuple[PPO, StandardScal
     return model, scaler
 
 
+def _checkpoint_exists(checkpoints_dir: Path, name: str) -> bool:
+    return (checkpoints_dir / f"{name}.zip").exists()
+
+
 def run(
     data_root: Path | None = None,
     n_folds: int = 5,
@@ -151,6 +155,7 @@ def run(
     include_event_features: bool = True,
     n_envs: int = 1,
     ppo_params: dict | None = None,
+    resume: bool = True,
 ) -> None:
     """Walk-forward 5폴드 + 공식 단일분할 정책을 전부 학습해 체크포인트로 저장한다.
 
@@ -161,6 +166,12 @@ def run(
     저장소의 4코어 로컬 환경 기준 실측으로 n_envs=8에서 약 2.6배 개선됐다
     (36.01ms/step -> 13.90ms/step) — ppo_params에 n_steps를 n_envs로 나눠
     버퍼 크기를 맞추는 걸 권장(예: n_envs=8이면 n_steps=256으로 버퍼=2048 유지).
+
+    resume=True(기본)면 이미 체크포인트(.zip)가 있는 폴드/공식분할은 다시
+    학습하지 않고 건너뛴다 — 전체 실행이 여러 시간 걸릴 수 있는 장시간
+    무인 작업이라, 중간에 끊겨도 이미 끝난 폴드는 재사용하고 이어서
+    진행할 수 있게 하기 위함(progress_log.json/score_events.py의 재개
+    원칙과 동일).
     """
     data_root = data_root or get_data_root()
     checkpoints_dir = data_root / "checkpoints"
@@ -168,6 +179,11 @@ def run(
     panel = build_panel(data_root=data_root, include_event_features=include_event_features)
 
     for f in walk_forward_fold_indices(panel, n_folds=n_folds):
+        name = f"rl_policy_fold{f.fold}"
+        if resume and _checkpoint_exists(checkpoints_dir, name):
+            print(f"[train_agent] fold {f.fold} 체크포인트 이미 존재 -> 건너뜀")
+            continue
+
         model, scaler = train_policy(
             panel,
             train_end_idx=f.train_end_idx,
@@ -186,10 +202,14 @@ def run(
             "include_event_features": include_event_features,
             "n_envs": n_envs,
         }
-        save_checkpoint(model, scaler, checkpoints_dir, f"rl_policy_fold{f.fold}", meta)
-        print(f"[train_agent] fold {f.fold} 학습 완료 -> rl_policy_fold{f.fold}.zip")
+        save_checkpoint(model, scaler, checkpoints_dir, name, meta)
+        print(f"[train_agent] fold {f.fold} 학습 완료 -> {name}.zip")
 
     train_end_idx, test_start_idx, test_end_idx = official_split_indices(panel)
+    if resume and _checkpoint_exists(checkpoints_dir, "rl_policy_v1"):
+        print("[train_agent] 공식 단일분할 체크포인트 이미 존재 -> 건너뜀")
+        return
+
     model, scaler = train_policy(
         panel,
         train_end_idx=train_end_idx,
@@ -213,4 +233,6 @@ def run(
 
 
 if __name__ == "__main__":
-    run()
+    # n_envs=8/n_steps=256(버퍼=2048)은 이 저장소 로컬 4코어 환경에서 실측 검증된
+    # 설정(13.90ms/step, CLAUDE.md "Phase 3 구체 사양" > "연산 자원" 참고).
+    run(total_timesteps_per_fold=500_000, n_envs=8, ppo_params={"n_steps": 256})
