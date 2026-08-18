@@ -1,10 +1,12 @@
 import numpy as np
 import pandas as pd
+import pytest
 
 from src.models.split import split_train_test
 from src.models.walk_forward import generate_walk_forward_folds
 from src.rl.panel import Panel
 from src.rl.train_agent import (
+    PPO_DEFAULT_PARAMS,
     _checkpoint_exists,
     date_to_idx,
     load_checkpoint,
@@ -146,3 +148,12 @@ def test_checkpoint_exists_detects_presence_and_absence(tmp_path):
 
     assert _checkpoint_exists(tmp_path, "rl_policy_fold1")
     assert not _checkpoint_exists(tmp_path, "rl_policy_fold2")
+
+
+def test_default_learning_rate_is_the_stability_validated_value():
+    """learning_rate=3e-4(SB3 기본값)로는 실 데이터 파일럿에서 approx_kl이
+    이터레이션마다 폭주(9->93->183)하는 걸 실측으로 확인했고, 3e-5로 낮추자
+    10개 이터레이션 내내 0.07~0.09로 안정화됐다 — 이 값이 조용히 원복되지
+    않도록 회귀 방지."""
+    assert PPO_DEFAULT_PARAMS["learning_rate"] == pytest.approx(3e-5)
+    assert PPO_DEFAULT_PARAMS["target_kl"] == pytest.approx(3.0)

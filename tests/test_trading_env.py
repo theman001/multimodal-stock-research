@@ -9,6 +9,7 @@ from src.rl.trading_env import (
     ACTION_HOLD,
     ACTION_SELL,
     MAX_MASKED_STREAK_DAYS,
+    REWARD_CLIP,
     TradingEnv,
 )
 
@@ -178,3 +179,22 @@ def test_reward_reflects_log_nav_change():
     _, reward1, _, _, _ = env.step(np.array([ACTION_HOLD]))
     nav_after_hold = nav_after_buy * (110.0 / 100.0)
     assert reward1 == pytest.approx(np.log(nav_after_hold / nav_after_buy))
+
+
+def test_extreme_price_move_clips_reward_but_not_true_nav():
+    """실 데이터에서 개별 종목 일간 로그수익률이 -0.84~+0.74까지 나오는 걸
+    확인함(042660/CORT, 둘 다 데이터 결함이 아니라 실제 급락/급등) — PPO가
+    이런 극단치에 그대로 노출되면 정책 업데이트가 폭주한다(approx_kl 실측
+    폭주 확인). reward는 REWARD_CLIP으로 잘리되, NAV 장부(info)는 정확한
+    값을 유지해야 한다."""
+    close = np.array([[100.0], [20.0], [20.0]])  # 첫날 -80% 폭락
+    panel = _make_panel(3, close, np.ones((3, 1)), market_id=[0])
+    env = TradingEnv(panel, date_start_idx=0, date_end_idx=2, random_start=False, max_position_weight=1.0)
+    env.reset()
+
+    env.step(np.array([ACTION_BUY]))
+    _, reward, _, _, info = env.step(np.array([ACTION_HOLD]))  # 폭락 반영되는 스텝
+
+    assert info["raw_reward"] == pytest.approx(np.log(20.0 / 100.0))  # 실제 하락폭 그대로
+    assert reward == pytest.approx(-REWARD_CLIP)  # 학습 신호는 클리핑됨
+    assert info["nav"] == pytest.approx(env.nav)  # NAV 장부는 클리핑과 무관하게 정확

@@ -209,7 +209,10 @@ S&P 지수 계열을 그대로 사용합니다. **S&P 500을 대형/중소형으
 NAV 무차원(1.0 시작). 그 스텝 BUY 신호 중 미보유 티커만 대상으로 `equal_share = 가용현금/len(buy_tickers)`, 종목당 `min(equal_share, MAX_POSITION_WEIGHT)`(기본 0.05, 파라미터화). 캡으로 남는 현금은 재분배 안 함(보수적). 보유 중 BUY는 no-op, SELL은 전량 청산만. 에피소드 마지막 스텝은 행동과 무관하게 강제 전량 청산.
 
 ### 보상 함수
-학습 신호 `reward_t = ln(NAV_{t+1}/NAV_t)`. 리포트용 지표는 `simulate.py::cumulative_return()`에 그대로 통과. **비용은 `simulate.py`처럼 매일 부과하지 않고 포지션을 열 때/닫을 때만** `round_trip_cost_for_market()`(`costs.py`, 요율 재사용)의 절반씩 부과 — 진입→청산 사이클 총비용은 Phase 1과 동일하게 유지, 타이밍만 다름(RL은 진짜 포지션 상태가 있으므로).
+학습 신호 `reward_t = ln(NAV_{t+1}/NAV_t)`, `REWARD_CLIP=0.15`로 클리핑(실제 NAV/포지션 장부는 클리핑 없이 정확히 추적 — `info["nav"]`/`info["raw_reward"]`가 참값). 리포트용 지표는 `simulate.py::cumulative_return()`에 그대로 통과(클리핑 안 된 참값 NAV 시계열 사용). **비용은 `simulate.py`처럼 매일 부과하지 않고 포지션을 열 때/닫을 때만** `round_trip_cost_for_market()`(`costs.py`, 요율 재사용)의 절반씩 부과 — 진입→청산 사이클 총비용은 Phase 1과 동일하게 유지, 타이밍만 다름(RL은 진짜 포지션 상태가 있으므로).
+
+### PPO 하이퍼파라미터 (실측 검증됨 — 임의 변경 금지, 근거는 `data/reports/phase3_reward_clipping_investigation.md`)
+`learning_rate=3e-5`(SB3 기본값 3e-4는 이 문제 규모(관측 ~2,884차원, 120개 동시 행동헤드)에서 approx_kl이 이터레이션마다 폭주하는 걸 실측으로 확인 — 절대 기본값으로 되돌리지 말 것), `target_kl=3.0`(MultiDiscrete(120)이라 SB3가 120개 독립 카테고리 분포의 KL을 합산 보고하므로 단일 행동공간 기준값의 약 120배 스케일), `policy_kwargs=dict(net_arch=[256,256])`. `n_envs=8`(`DummyVecEnv`) + `n_steps=256`(버퍼=2048)이 로컬 4코어 환경 기준 실측 검증된 조합(13.90ms/step, n_envs=1 대비 2.59배).
 
 ### 에피소드/평가
 학습은 `EPISODE_LENGTH_DAYS=252`, 폴드 train 구간 내 무작위 시작(embargo 침범 방지 가드 포함). 평가는 결정적 단일 패스. `generate_walk_forward_folds()`(`walk_forward.py`, 그대로 재사용)로 5폴드 정의, 폴드마다 새로 학습. 공식 헤드라인 비교는 `train.parquet`/`test.parquet`(2024-06-25~2026-08-07, `backtest_report_v3.md`와 동일 구간)에서 별도로 1회.
@@ -230,7 +233,7 @@ SB3의 `VecNormalize`는 기본적으로 온라인으로 통계를 갱신하는�
 
 - [x] `src/rl/panel.py` + `obs_scaler.py` 구현, 누수 검증 유닛테스트(`tests/test_rl_panel_leakage.py`, `tests/test_rl_obs_scaler.py`) 통과 — 실제 데이터로 `build_panel()` 실행 검증 완료(2026-08-17)
 - [x] `src/rl/trading_env.py`(Gymnasium 환경) 구현, reset/step/비용/강제청산 로직 유닛테스트(`tests/test_trading_env.py`) 통과 — 실제 120종목 패널로 무작위 정책 스모크 테스트 + all-HOLD NAV 불변 검증 완료(2026-08-17)
-- [x] PPO 학습 파이프라인(`src/rl/train_agent.py`) 구현, CPU 파일럿으로 학습 가능성 확인(필요시 Colab GPU 전환) — 파일럿 결과 병목은 환경이 아니라 정책망 추론(배치크기 1 순차 추론). `train_policy(n_envs=N)`로 DummyVecEnv 배치화 적용, 로컬 4코어 기준 n_envs=8에서 2.59배 개선(36.01→13.90ms/step, 2026-08-17). 전체 5폴드+공식분할 실학습(약 11.6시간 추정) 착수는 사용자 확인 후 진행
+- [x] PPO 학습 파이프라인(`src/rl/train_agent.py`) 구현, CPU 파일럿으로 학습 가능성 확인(필요시 Colab GPU 전환) — 파일럿 결과 병목은 환경이 아니라 정책망 추론(배치크기 1 순차 추론). `train_policy(n_envs=N)`로 DummyVecEnv 배치화 적용, 로컬 4코어 기준 n_envs=8에서 2.59배 개선(36.01→13.90ms/step, 2026-08-17). **전체 실행 첫 시도에서 PPO 학습이 실제로 불안정(approx_kl 폭주 9.9→183.2)함을 발견해 중단·조사** — 데이터 결함이 아니라(042660/CORT 극단치 둘 다 진짜 시세변동으로 확인) `learning_rate` 기본값(3e-4)이 이 문제 규모(관측 ~2,884차원, 120개 동시 행동헤드)엔 과도했던 게 원인. `3e-5`로 낮추자 완전 안정화(10개 이터레이션 내내 approx_kl 0.07~0.09, explained_variance -1.82→0.78 꾸준히 개선). `PPO_DEFAULT_PARAMS`에 `learning_rate=3e-5`/`target_kl=3.0`(2차 안전장치) 반영, `trading_env.py`에 `REWARD_CLIP=0.15`도 함께 추가. 상세 조사 과정은 `data/reports/phase3_reward_clipping_investigation.md` 참고. 전체 5폴드+공식분할 실학습(약 11.6시간 추정, 안정화된 설정으로 재시작)
 - [ ] Walk-forward 5폴드 + 공식 단일분할(test.parquet 구간) 평가 완료, Phase 1 분류기 전략/랜덤워크/Buy&Hold 대비 비교 리포트 작성(paired bootstrap 포함)
 - [ ] `progress_log.json` 갱신, `next_action`이 "Phase 3 결과 확인 후 Phase 4 착수 여부 사용자 확인 대기"로 갱신
 

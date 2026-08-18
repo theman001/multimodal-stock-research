@@ -34,6 +34,18 @@ MAX_POSITION_WEIGHT = 0.05  # 신규 진입 시 한 종목이 NAV의 이 비율�
 EPISODE_LENGTH_DAYS = 252  # 학습 에피소드 길이(약 1거래년)
 MAX_MASKED_STREAK_DAYS = 10  # simulate.py의 MAX_REALIZED_RETURN_GAP_DAYS와 동일한 값·취지
 
+# 실제 데이터 검증 결과 개별 종목 일간 로그수익률이 -0.84~+0.74까지도 나온다
+# (예: 042660 2017-10-30 -83.7%, CORT 2025-03-31 +73.75% — 둘 다 실제 급락/
+# 급등이지 액면분할 등 데이터 결함이 아님을 조사로 확인함, 상세는
+# data/reports/phase3_reward_clipping_investigation.md 참고). PPO는 보상
+# 스케일에 민감해서 이런 진짜 극단치가 그대로 들어가면 정책 업데이트가
+# 폭주한다(approx_kl이 반복마다 계속 커지는 걸 실측으로 확인) — 실제 NAV/포지션
+# 장부는 클리핑 없이 정확히 추적하고(평가·리포트용), PPO에 돌려주는 학습
+# 신호(reward)만 이 값으로 clip한다. 최대 20개 포지션(5% 상한 x 20)에 걸친
+# 분산을 감안해도 여유 있게 큰 값으로 잡았다 — Atari DQN의 보상 clip[-1,1]과
+# 같은 취지의 표준적인 RL 안정화 기법.
+REWARD_CLIP = 0.15
+
 _KR_ROUND_TRIP = kr_round_trip_cost()
 _US_ROUND_TRIP = us_round_trip_cost()
 
@@ -199,8 +211,9 @@ class TradingEnv(gym.Env):
                 self.masked_streak[buy_idx] = 0
 
         nav_new = max(self.cash + self.position_value.sum(), 1e-8)
-        reward = float(np.log(nav_new / self.nav))
-        self.nav = nav_new
+        raw_reward = float(np.log(nav_new / self.nav))
+        self.nav = nav_new  # 실제 NAV는 클리핑 없이 정확히 추적(평가/리포트는 이 값을 씀)
+        reward = float(np.clip(raw_reward, -REWARD_CLIP, REWARD_CLIP))
 
         self.t += 1
         truncated = self.t > self.episode_end_idx
@@ -209,7 +222,12 @@ class TradingEnv(gym.Env):
         obs_t = min(self.t, self.episode_end_idx)
         obs = self._build_observation(obs_t)
 
-        info = {"nav": nav_new, "cash": self.cash, "n_holding": int(self.holding.sum())}
+        info = {
+            "nav": nav_new,
+            "cash": self.cash,
+            "n_holding": int(self.holding.sum()),
+            "raw_reward": raw_reward,
+        }
         return obs, reward, terminated, truncated, info
 
     # ------------------------------------------------------------------ #

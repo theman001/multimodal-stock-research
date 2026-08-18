@@ -33,7 +33,25 @@ from src.rl.trading_env import EPISODE_LENGTH_DAYS, TradingEnv
 
 # 관측 차원이 커서(120종목 x D_static, ~2,900) SB3 기본 정책망(2x64)보다 키운다.
 POLICY_KWARGS = dict(net_arch=[256, 256])
-PPO_DEFAULT_PARAMS: dict = dict(seed=42, verbose=0, policy_kwargs=POLICY_KWARGS)
+
+# 첫 실측 파일럿(learning_rate 기본값 3e-4)에서 approx_kl이 이터레이션마다 계속
+# 불어나는(9->93->183) 폭주를 실제로 관측했다. trading_env.py의 REWARD_CLIP만
+# 추가했을 때도 여전히 불안정(KL이 종종 50대까지 튐)했지만, learning_rate를
+# 3e-5로 10배 낮추자 완전히 안정화됨을 재파일럿으로 확인했다(10개 이터레이션
+# 내내 approx_kl 0.067~0.090 유지, explained_variance가 -1.82->0.78로 꾸준히
+# 개선). 관측 차원(~2,900) + 120개 동시 행동헤드라는 이 문제의 규모에서는 SB3
+# 기본 학습률이 과도했던 것으로 판단, 이 값을 검증된 기본값으로 삼는다.
+# target_kl은 그와 별개로 "그래도 한 번의 업데이트가 과도하게 크면 그 자리에서
+# 멈춘다"는 2차 안전장치. MultiDiscrete(120)은 SB3가 120개 독립 카테고리
+# 분포의 KL을 합산해서 보고하므로, 단일 행동공간에서 흔히 쓰는 값(0.01~0.03)의
+# 약 120배 스케일로 잡는다.
+PPO_DEFAULT_PARAMS: dict = dict(
+    seed=42,
+    verbose=0,
+    policy_kwargs=POLICY_KWARGS,
+    learning_rate=3e-5,
+    target_kl=3.0,
+)
 
 
 def date_to_idx(panel: Panel, date) -> int:
