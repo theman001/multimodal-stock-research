@@ -48,3 +48,38 @@ def bootstrap_return_ci(daily_returns: np.ndarray, n_boot: int = 1000, seed: int
         "ci_low": float(np.percentile(totals, 2.5)),
         "ci_high": float(np.percentile(totals, 97.5)),
     }
+
+
+def paired_bootstrap_return_diff_ci(
+    returns_a: np.ndarray, returns_b: np.ndarray, n_boot: int = 1000, seed: int = 42
+) -> dict:
+    """같은 기간 두 전략의 일별 수익률을 "짝지어" 리샘플링해, 누적수익률
+    차이(A-B)의 95% 신뢰구간을 구한다.
+
+    Phase 3에서 "RL 정책이 기존 분류기 전략보다 나은가"에 답하기 위해
+    추가됨(CLAUDE.md "Phase 3 구체 사양" > "평가/비교"). bootstrap_return_ci는
+    단일 시계열 하나의 CI만 주므로 두 전략을 직접 비교할 수 없다 — 반드시
+    같은 날짜 인덱스를 두 시계열에 동일하게 적용해 리샘플링해야(따로따로
+    리샘플링하면 안 됨) 같은 시장 국면 노출을 유지한 채 비교가 성립한다.
+    """
+    if len(returns_a) != len(returns_b):
+        raise ValueError("두 수익률 시계열의 길이가 다름 — 같은 기간이어야 짝지어 비교 가능")
+    if len(returns_a) == 0:
+        return {"point_estimate": float("nan"), "ci_low": float("nan"), "ci_high": float("nan")}
+
+    rng = np.random.default_rng(seed)
+    n = len(returns_a)
+    diffs = np.empty(n_boot)
+    for i in range(n_boot):
+        idx = rng.integers(0, n, size=n)
+        total_a = np.prod(1 + returns_a[idx]) - 1
+        total_b = np.prod(1 + returns_b[idx]) - 1
+        diffs[i] = total_a - total_b
+
+    point_a = np.prod(1 + returns_a) - 1
+    point_b = np.prod(1 + returns_b) - 1
+    return {
+        "point_estimate": float(point_a - point_b),
+        "ci_low": float(np.percentile(diffs, 2.5)),
+        "ci_high": float(np.percentile(diffs, 97.5)),
+    }

@@ -15,11 +15,11 @@
 
 **최종 목표는 스스로 매수/매도/보유를 판단하는 AI Agent입니다.** 그 판단의 기반이 되는 신호를 Phase 1~2에서 통계적으로 검증하는 것이 지금 단계의 목적입니다: 단순 가격 예측이 아니라 "시장 분류 × 기업 규모 카테고리에 따라 기술적 지표와 뉴스 이벤트의 통계적 유의성이 어떻게 달라지는가"를 검증하는 리서치 파이프라인입니다. 데이터셋을 케이스별로 쪼개서 각개 학습시키지 않고, 하나의 데이터셋에 `Market_Id`(국내/해외), `Size_Id`(대형/중형/소형) **메타 특성**을 주입해 조건부 연관성을 학습시키는 것이 핵심 사상입니다.
 
-## 전체 로드맵과 현재 스코프: Phase 3 설계 확정, 구현 착수는 별도 승인 대기
+## 전체 로드맵과 현재 스코프: Phase 3 완료, Phase 4 착수 여부 사용자 확인 대기
 
 - **Phase 1 (완료, 2026-08-12 사용자 승인)**: 차트 중심 조건부 연결 학습 MVP — 데이터 수집, 메타 태그 결합, 누수 없는 시계열 분할/학습, 수수료·슬리피지 반영 백테스팅. 산출물은 "익일 등락 확률" 신호(model_v3). walk-forward CV·하이퍼파라미터 탐색으로 51~53% 방향성 정확도가 기술지표 기반 신호의 현실적 천장임을 확인.
 - **Phase 2 (완료, 2026-08-17)**: 뉴스/이벤트 신호 융합. Definition of Done 전 항목 충족(모듈 1~5). 이벤트/감성 피처를 추가해도 XGBoost 익일 방향성 예측은 노이즈 수준 이상 개선되지 않는다는 결론(`data/reports/phase2_retraining_comparison_report.md`) — model_v3(13피처)를 공식 산출물로 유지. 상세 사양은 `plan/08_phase2_news_events.md` 참고.
-- **Phase 3 (설계 확정, 2026-08-17 사용자 승인 "Phase3는 구체적인 계획을 먼저 세우자" — 코드 구현은 이 설계에 대한 별도 승인 필요)**: RL 트레이딩 에이전트 — Phase 1의 확률 신호 + Phase 2의 이벤트 신호를 state로 받아 120종목 포트폴리오 전체의 매수/매도/보유 정책을 PPO로 학습하는 signal-conditioned RL. 상세 사양은 아래 "Phase 3 구체 사양" 및 `plan/09_phase3_rl_agent_design.md` 참고.
+- **Phase 3 (완료, 2026-08-18)**: RL 트레이딩 에이전트. Definition of Done 전 항목 충족(설계→panel/obs_scaler→trading_env→PPO 학습 파이프라인+실학습→평가). 120종목 포트폴리오 PPO 정책이 절대수익률로는 Buy&Hold/분류기/랜덤워크를 모두 앞섰지만, 실제 계측 결과 정교한 타이밍이 아니라 "항상 광범위하게 분산투자한 채 최대 노출 유지"라는 저정교도 전략으로 수렴한 것으로 판단(`data/reports/phase3_rl_backtest_report_v1.md`) — 절대수익률을 학습된 알파로 해석하지 않음. 상세 사양은 `plan/09_phase3_rl_agent_design.md` 참고.
 - **Phase 4 (금지, 필요시에만)**: 실시간 운영 루프. 학습과 별개의 배포 문제로 취급하고 Phase 3 이후 별도 승인 하에 진행
 
 각 Phase는 이전 Phase의 Definition of Done을 충족하고 사용자가 명시적으로 승인해야 다음으로 진행한다. Phase 4의 코드나 상세 설계는 아직 미리 만들지 않는다. Phase 3는 설계 문서까지는 확정했지만, `src/rl/` 코드·`requirements.txt` 변경·모델 학습 등 실제 구현은 사용자의 별도 승인이 있어야 시작한다 — 스코프 확장은 반드시 사용자 지시로만 시작한다.
@@ -234,8 +234,8 @@ SB3의 `VecNormalize`는 기본적으로 온라인으로 통계를 갱신하는�
 - [x] `src/rl/panel.py` + `obs_scaler.py` 구현, 누수 검증 유닛테스트(`tests/test_rl_panel_leakage.py`, `tests/test_rl_obs_scaler.py`) 통과 — 실제 데이터로 `build_panel()` 실행 검증 완료(2026-08-17)
 - [x] `src/rl/trading_env.py`(Gymnasium 환경) 구현, reset/step/비용/강제청산 로직 유닛테스트(`tests/test_trading_env.py`) 통과 — 실제 120종목 패널로 무작위 정책 스모크 테스트 + all-HOLD NAV 불변 검증 완료(2026-08-17)
 - [x] PPO 학습 파이프라인(`src/rl/train_agent.py`) 구현, CPU 파일럿으로 학습 가능성 확인(필요시 Colab GPU 전환) — 파일럿 결과 병목은 환경이 아니라 정책망 추론(배치크기 1 순차 추론). `train_policy(n_envs=N)`로 DummyVecEnv 배치화 적용, 로컬 4코어 기준 n_envs=8에서 2.59배 개선(36.01→13.90ms/step, 2026-08-17). **전체 실행 첫 시도에서 PPO 학습이 실제로 불안정(approx_kl 폭주 9.9→183.2)함을 발견해 중단·조사** — 데이터 결함이 아니라(042660/CORT 극단치 둘 다 진짜 시세변동으로 확인) `learning_rate` 기본값(3e-4)이 이 문제 규모(관측 ~2,884차원, 120개 동시 행동헤드)엔 과도했던 게 원인. `3e-5`로 낮추자 완전 안정화(10개 이터레이션 내내 approx_kl 0.07~0.09, explained_variance -1.82→0.78 꾸준히 개선). `PPO_DEFAULT_PARAMS`에 `learning_rate=3e-5`/`target_kl=3.0`(2차 안전장치) 반영, `trading_env.py`에 `REWARD_CLIP=0.15`도 함께 추가. 상세 조사 과정은 `data/reports/phase3_reward_clipping_investigation.md` 참고. **전체 5폴드+공식분할 실학습 완료**(2026-08-18, 02:03~13:14, 약 11.2시간) — `data/checkpoints/rl_policy_fold{1..5}.zip`+`rl_policy_v1.zip` 전부 저장, 전체 1,464개 이터레이션에 걸쳐 approx_kl 0.065~0.226 범위 유지(재발 없음, 안정화 조치가 장시간 실행에서도 유효함을 확인)
-- [ ] Walk-forward 5폴드 + 공식 단일분할(test.parquet 구간) 평가 완료, Phase 1 분류기 전략/랜덤워크/Buy&Hold 대비 비교 리포트 작성(paired bootstrap 포함)
-- [ ] `progress_log.json` 갱신, `next_action`이 "Phase 3 결과 확인 후 Phase 4 착수 여부 사용자 확인 대기"로 갱신
+- [x] Walk-forward 5폴드 + 공식 단일분할(test.parquet 구간) 평가 완료, Phase 1 분류기 전략/랜덤워크/Buy&Hold 대비 비교 리포트 작성(paired bootstrap 포함) — `src/backtest/significance.py::paired_bootstrap_return_diff_ci()` 신규 추가, `src/rl/evaluate.py` 구현. **중요**: 공식분할 RL 누적수익률(106%)이 랜덤워크 최댓값보다 92%p 높아 조사한 결과, 실제로는 정교한 타이밍이 아니라 평균 보유종목수 55.9/120·현금비중 0.37%인 "항상 광범위하게 분산투자한 채 최대 노출 유지"로 수렴한 저정교도 전략으로 확인됨(랜덤워크 벤치마크 자체가 매일 재추첨이라 지속보유 전략엔 약한 기준선 — 같은 구간 Buy&Hold 89.5%인데 랜덤워크 최댓값은 14.0%뿐). 절대수익률을 "학습된 알파"로 해석하지 않음. 상세는 `data/reports/phase3_rl_backtest_report_v1.md` 참고
+- [x] `progress_log.json` 갱신, `next_action`이 "Phase 3 결과 확인 후 Phase 4 착수 여부 사용자 확인 대기"로 갱신
 
 ## 관련 스킬
 
