@@ -181,11 +181,13 @@ class TradingEnv(gym.Env):
         sell_mask = self.holding & has_price_today & (action == ACTION_SELL)
         self._close_positions(sell_mask)
 
-        # 4) 에피소드 마지막 스텝은 행동과 무관하게 강제 전량 청산
+        # 4) 에피소드 마지막 스텝은 행동과 무관하게 강제 전량 청산.
+        #    가격이 없는 극단적 케이스도 포함해서 전부 청산한다 —
+        #    position_value는 마지막으로 가격이 있었던 시점의 마킹값을 그대로
+        #    들고 있으므로(마스킹된 동안엔 갱신되지 않음), 별도로 가격을
+        #    넘겨줄 필요 없이 이 한 번의 호출로 "마지막 유효가 기준 청산"이 된다.
         if is_terminal_step:
-            self._close_positions(self.holding & has_price_today)
-            # 마지막 날에도 가격이 없는 극단적 케이스는 마지막 유효가로 청산
-            self._close_positions(self.holding, price_override=self.last_close)
+            self._close_positions(self.holding)
 
         # 5) BUY 처리 (마지막 스텝엔 신규 진입 없음)
         if not is_terminal_step:
@@ -234,7 +236,7 @@ class TradingEnv(gym.Env):
     # 내부 헬퍼
     # ------------------------------------------------------------------ #
 
-    def _close_positions(self, mask: np.ndarray, price_override: np.ndarray | None = None) -> None:
+    def _close_positions(self, mask: np.ndarray) -> None:
         idx = np.where(mask)[0]
         if len(idx) == 0:
             return

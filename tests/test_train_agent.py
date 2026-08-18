@@ -10,6 +10,7 @@ from src.rl.train_agent import (
     _checkpoint_exists,
     date_to_idx,
     load_checkpoint,
+    load_checkpoint_meta,
     official_split_indices,
     save_checkpoint,
     train_policy,
@@ -157,3 +158,39 @@ def test_default_learning_rate_is_the_stability_validated_value():
     않도록 회귀 방지."""
     assert PPO_DEFAULT_PARAMS["learning_rate"] == pytest.approx(3e-5)
     assert PPO_DEFAULT_PARAMS["target_kl"] == pytest.approx(3.0)
+
+
+def test_ppo_params_cannot_silently_override_stability_critical_values():
+    """ppo_params로 n_steps/batch_size 같은 값은 자유롭게 바꿀 수 있어야 하지만,
+    learning_rate/target_kl은 실측으로 검증된 값이라 조용히 덮어써지면 안 된다
+    (덮어써질 경우 실제로 approx_kl이 9->183까지 폭주했던 그 설정으로 조용히
+    되돌아간다) — 명시적 에러로 막는다."""
+    panel = _make_panel(40, n_tickers=3)
+
+    with pytest.raises(ValueError, match="learning_rate"):
+        train_policy(
+            panel,
+            train_end_idx=30,
+            total_timesteps=32,
+            episode_length_days=10,
+            seed=0,
+            ppo_params={"n_steps": 16, "batch_size": 8, "learning_rate": 3e-4},
+        )
+
+
+def test_load_checkpoint_meta_round_trips_saved_metadata(tmp_path):
+    panel = _make_panel(40, n_tickers=3)
+    model, scaler = train_policy(
+        panel,
+        train_end_idx=30,
+        total_timesteps=32,
+        episode_length_days=10,
+        seed=0,
+        ppo_params={"n_steps": 16, "batch_size": 8},
+    )
+    save_checkpoint(model, scaler, tmp_path, "rl_policy_fold1", {"fold": 1, "include_event_features": True})
+
+    meta = load_checkpoint_meta(tmp_path, "rl_policy_fold1")
+
+    assert meta["fold"] == 1
+    assert meta["include_event_features"] is True

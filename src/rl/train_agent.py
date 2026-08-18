@@ -53,6 +53,11 @@ PPO_DEFAULT_PARAMS: dict = dict(
     target_kl=3.0,
 )
 
+# train_policy()의 ppo_params가 이 두 값만은 조용히 덮어쓰지 못하게 막는다 —
+# n_steps/batch_size/verbose 등은 파일럿/테스트에서 자유롭게 바꿔도 되지만,
+# learning_rate/target_kl은 실측으로 검증된 값이라 실수로 되돌리면 안 된다.
+_STABILITY_CRITICAL_PARAMS = {"learning_rate", "target_kl"}
+
 
 def date_to_idx(panel: Panel, date) -> int:
     """panel.dates 상에서 date(정확히 일치하는 값)의 인덱스를 찾는다."""
@@ -142,7 +147,18 @@ def train_policy(
 
         env = DummyVecEnv([_make_env for _ in range(n_envs)])
 
-    params = {**PPO_DEFAULT_PARAMS, **(ppo_params or {}), "seed": seed}
+    ppo_params = ppo_params or {}
+    clobbered = _STABILITY_CRITICAL_PARAMS & ppo_params.keys()
+    if clobbered:
+        raise ValueError(
+            f"ppo_params가 안정성 검증된 값을 덮어쓰려 함: {clobbered} — "
+            "learning_rate=3e-5/target_kl=3.0은 실측 파일럿으로 검증된 값이라(원래 "
+            "SB3 기본 learning_rate=3e-4로는 approx_kl이 폭주했음, "
+            "data/reports/phase3_reward_clipping_investigation.md 참고) ppo_params로 "
+            "조용히 바꾸면 안 된다. 정말 바꿔야 한다면 PPO_DEFAULT_PARAMS 자체를 "
+            "의도적으로 수정하고 재파일럿으로 다시 검증할 것."
+        )
+    params = {**PPO_DEFAULT_PARAMS, **ppo_params, "seed": seed}
     model = PPO("MlpPolicy", env, **params)
     model.learn(total_timesteps=total_timesteps)
     return model, scaler
@@ -160,6 +176,10 @@ def load_checkpoint(checkpoints_dir: Path, name: str) -> tuple[PPO, StandardScal
     model = PPO.load(str(checkpoints_dir / f"{name}.zip"))
     scaler = load_obs_scaler(checkpoints_dir / f"{name}_scaler.pkl")
     return model, scaler
+
+
+def load_checkpoint_meta(checkpoints_dir: Path, name: str) -> dict:
+    return json.loads((checkpoints_dir / f"{name}.meta.json").read_text(encoding="utf-8"))
 
 
 def _checkpoint_exists(checkpoints_dir: Path, name: str) -> bool:

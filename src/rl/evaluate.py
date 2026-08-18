@@ -34,7 +34,7 @@ from src.backtest.simulate import (
 )
 from src.config import get_data_root
 from src.rl.panel import Panel, score_model_v3_probabilities
-from src.rl.train_agent import load_checkpoint, official_split_indices, walk_forward_fold_indices
+from src.rl.train_agent import load_checkpoint, load_checkpoint_meta, official_split_indices, walk_forward_fold_indices
 from src.rl.trading_env import TradingEnv
 
 
@@ -84,7 +84,7 @@ def rollout_policy_with_positioning_stats(
 
     nav_series = pd.Series([r[1] for r in records], index=pd.DatetimeIndex([r[0] for r in records]))
     daily_returns = nav_series.pct_change()
-    daily_returns.iloc[0] = nav_series.iloc[0] / 1.0 - 1.0  # 첫날은 initial_nav(1.0) 대비
+    daily_returns.iloc[0] = nav_series.iloc[0] / env.initial_nav - 1.0  # 첫날은 initial_nav 대비
 
     # 마지막 스텝은 에피소드 종료 강제청산이라 항상 n_holding=0/cash_weight=1 —
     # "평상시 얼마나 투자하는가"를 왜곡하므로 통계에서 제외한다.
@@ -100,10 +100,21 @@ def _window_realized_return_df(
     features_df: pd.DataFrame, ohlcv_df: pd.DataFrame, date_start, date_end
 ) -> pd.DataFrame:
     """[date_start, date_end] 구간의 (ticker, date) 행에 실현수익률을 붙인다.
-    run_backtest.py와 동일한 패턴(add_realized_return 재사용)."""
-    window = features_df[(features_df["date"] >= date_start) & (features_df["date"] <= date_end)].copy()
-    df = window.merge(ohlcv_df[["date", "ticker", "close"]], on=["date", "ticker"], how="left")
+    run_backtest.py와 동일한 패턴(add_realized_return 재사용).
+
+    date_end 당일의 realized_return을 구하려면 그 다음 거래일의 종가가 필요하다.
+    먼저 [date_start, date_end]로 자른 뒤 add_realized_return을 적용하면, 각
+    종목의 구간 마지막 행은 "다음 행이 없음"으로 처리돼(shift(-1)이 그룹 내
+    다음 행을 못 찾음) NaN이 되고 dropna에서 사라진다 — RL 롤아웃(panel 전체
+    날짜를 그대로 씀)은 date_end까지 꽉 채워 쓰는데 이 함수만 하루 짧아져
+    비교 구간이 어긋나는 실제 버그였다. date_end 이후로 살짝 넓힌 구간에서
+    먼저 계산한 뒤, 최종적으로 [date_start, date_end]로 다시 잘라낸다.
+    """
+    buffer_end = date_end + pd.Timedelta(days=10)  # simulate.py MAX_REALIZED_RETURN_GAP_DAYS와 동일한 여유
+    extended = features_df[(features_df["date"] >= date_start) & (features_df["date"] <= buffer_end)].copy()
+    df = extended.merge(ohlcv_df[["date", "ticker", "close"]], on=["date", "ticker"], how="left")
     df = add_realized_return(df)
+    df = df[(df["date"] >= date_start) & (df["date"] <= date_end)]
     return df.dropna(subset=["realized_return"]).reset_index(drop=True)
 
 
@@ -163,6 +174,26 @@ def evaluate_window(
     }
 
 
+def _load_checkpoint_checked(checkpoints_dir: Path, name: str, include_event_features: bool) -> tuple[PPO, StandardScaler]:
+    """체크포인트를 불러오되, 학습 당시의 include_event_features(그 .meta.json에
+    기록됨)가 지금 이 평가가 쓰려는 값과 일치하는지 먼저 확인한다.
+
+    둘이 다르면 관측 차원(D_static)이 어긋나 StandardScaler/정책망 입력 크기가
+    안 맞아 sklearn/SB3 내부 어딘가에서 알아보기 힘든 shape 에러로 죽는다 —
+    여기서 먼저 이름 붙은 명확한 에러로 막는다.
+    """
+    meta = load_checkpoint_meta(checkpoints_dir, name)
+    trained_with = meta.get("include_event_features")
+    if trained_with != include_event_features:
+        raise ValueError(
+            f"{name} 체크포인트는 include_event_features={trained_with}로 학습됐는데 "
+            f"지금 평가는 include_event_features={include_event_features}로 패널을 만들었음 — "
+            "관측 차원이 어긋나 평가를 진행할 수 없다. run()의 include_event_features를 "
+            f"{trained_with}로 맞출 것."
+        )
+    return load_checkpoint(checkpoints_dir, name)
+
+
 def run(data_root: Path | None = None, include_event_features: bool = True) -> dict:
     """walk-forward 5폴드 + 공식 단일분할 전부 평가하고 리포트를 저장한다."""
     from src.rl.panel import build_panel  # 지연 임포트: run() 호출 시점에만 필요(무거운 IO)
@@ -179,7 +210,7 @@ def run(data_root: Path | None = None, include_event_features: bool = True) -> d
 
     fold_results = []
     for f in walk_forward_fold_indices(panel, n_folds=5):
-        model, scaler = load_checkpoint(checkpoints_dir, f"rl_policy_fold{f.fold}")
+        model, scaler = _load_checkpoint_checked(checkpoints_dir, f"rl_policy_fold{f.fold}", include_event_features)
         result = evaluate_window(
             panel, model, scaler, features_df, ohlcv_df, data_root, f.test_start_idx, f.test_end_idx
         )
@@ -188,7 +219,7 @@ def run(data_root: Path | None = None, include_event_features: bool = True) -> d
         print(f"[evaluate] fold {f.fold} 평가 완료: RL 누적수익률 {result['rl_total_return']:.4%}")
 
     train_end_idx, test_start_idx, test_end_idx = official_split_indices(panel)
-    model, scaler = load_checkpoint(checkpoints_dir, "rl_policy_v1")
+    model, scaler = _load_checkpoint_checked(checkpoints_dir, "rl_policy_v1", include_event_features)
     official_result = evaluate_window(
         panel, model, scaler, features_df, ohlcv_df, data_root, test_start_idx, test_end_idx
     )
@@ -205,6 +236,17 @@ def _write_report(official: dict, folds: list[dict], reports_dir: Path) -> Path:
     lines.append("# Phase 3 RL 정책 백테스트 리포트 v1")
     lines.append("")
     lines.append(f"생성 시각: {date.today().isoformat()}")
+    lines.append("")
+    lines.append(
+        "> ⚠️ **이 리포트의 RL 수치는 학습 시점과 다른 입력분포로 평가된 것이라 신뢰할 수 없다.** "
+        "`panel.py::score_model_v3_probabilities()`가 model_v3에 스케일링 안 된 raw 값을 넣던 버그를 "
+        "이 리포트를 만들면서 발견해 수정했다(raw vs 스케일링 입력의 예측 상관계수 0.044 — 사실상 무관). "
+        "그런데 지금 저장된 6개 정책은 전부 **그 버그가 있던 상태의 model_v3_prob 분포**를 보며 학습됐고, "
+        "이 리포트는 방금 **수정된(올바른) model_v3_prob 분포**로 그 정책들을 평가한 것이다 — 즉 학습 때 "
+        "본 적 없는 입력분포로 테스트하는 셈이라 train/eval이 어긋나 있다. 분류기 전략 벤치마크 수치와 "
+        "평가 구간(1일 절단 버그 수정)은 이 리포트에서 올바르게 고쳐졌지만, **RL 정책 자체의 수치는 "
+        "수정된 model_v3.py로 처음부터 재학습해야 신뢰할 수 있다.**"
+    )
     lines.append("")
     lines.append(
         "**비용 가정**: `src/backtest/costs.py`(Phase 1과 동일 요율) — 국내 왕복 수수료 0.03% + "

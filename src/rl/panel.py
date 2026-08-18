@@ -19,6 +19,18 @@ include_event_features로 토글) + market_id(1) + size_id(1) + valid_mask(1)
 - model_v3는 13개 기술지표만으로 학습됐다 — `src.models.train._prepare_X`는 Phase 2
   모듈 4 이후 FEATURE_COLUMNS(17개)를 쓰므로 그대로 재사용하면 model_v3에 맞지
   않는 컬럼 수가 들어간다. 이 파일에서 model_v3 전용으로 13개만 별도 준비한다.
+- **model_v3는 스케일링된 입력으로 학습됐다.** `src/models/build_split.py`가
+  `fit_scaler`/`transform`(Train에만 fit)으로 표준화한 `train.parquet`을 model_v3가
+  학습했으므로, 추론 시에도 반드시 같은 방식으로 스케일링해야 한다 — raw 값을
+  그대로 넣으면 트리 분기 임계값이 완전히 다른 분포를 보고 사실상 무작위에
+  가까운 예측이 나온다(실측: raw 입력과 스케일링된 입력의 예측 상관계수 0.044,
+  거의 무관함. 코드화 전 리뷰로 발견해 수정 — data/reports/phase3_reward_clipping_investigation.md
+  옆에 별도 기록 없이 이 주석과 커밋 메시지로 남김). `data/checkpoints/scaler.pkl`은
+  Phase 2 모듈 4 이후 FEATURE_COLUMNS(17개) 기준으로 다시 fit됐지만, StandardScaler는
+  컬럼별로 독립적으로 평균/표준편차를 계산하므로 13개 BASE_FEATURE_COLUMNS에
+  대한 변환값은 model_v3가 원래 학습 때 본 것과 동일하다(실측으로 확인: 이
+  스케일러로 변환한 test.parquet 구간 정확도가 model_v3.meta.json의 원래 기록
+  0.5169399830938293과 정확히 일치).
 """
 from __future__ import annotations
 
@@ -32,6 +44,7 @@ from xgboost import XGBClassifier
 
 from src.config import get_data_root
 from src.features.indicators import BASE_FEATURE_COLUMNS, EVENT_FEATURE_COLUMNS
+from src.models.scaling import load_scaler, transform as scale_transform
 from src.models.train import MARKET_ID_CATEGORIES, META_COLUMNS, SIZE_ID_CATEGORIES
 
 MODEL_V3_PROB_COLUMN = "model_v3_prob"
@@ -92,10 +105,17 @@ def score_model_v3_probabilities(features_df: pd.DataFrame, data_root: Path) -> 
     trading_env.py가 매 step()마다 재추론하지 않도록 패널 구성 시점에 한 번만
     계산한다. features_df와 같은 행 순서로 반환하므로(조인이 아니라 컬럼 선택만
     수행) 정렬 문제가 애초에 발생하지 않는다.
+
+    model_v3는 스케일링된 입력으로 학습됐으므로(모듈 docstring 참고), 여기서도
+    반드시 같은 스케일러로 transform()한 뒤에 넣어야 한다 — raw 값을 넣으면 안 됨.
     """
     model = XGBClassifier()
     model.load_model(str(data_root / "checkpoints" / "model_v3.json"))
-    X = _prepare_x_for_model_v3(features_df)
+
+    scaler = load_scaler(data_root / "checkpoints" / "scaler.pkl")
+    scaled_df = scale_transform(features_df, scaler)
+
+    X = _prepare_x_for_model_v3(scaled_df)
     return model.predict_proba(X)[:, 1]
 
 

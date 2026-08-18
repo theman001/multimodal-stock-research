@@ -3,11 +3,13 @@ import pandas as pd
 import pytest
 
 from src.rl.evaluate import (
+    _load_checkpoint_checked,
     _window_realized_return_df,
     rollout_policy_daily_returns,
     rollout_policy_with_positioning_stats,
 )
 from src.rl.panel import Panel
+from src.rl.train_agent import save_checkpoint, train_policy
 from src.rl.trading_env import ACTION_BUY, ACTION_HOLD
 
 FEATURE_NAMES = ["f0", "f1", "valid_mask"]
@@ -89,12 +91,16 @@ def test_window_realized_return_df_filters_date_range_and_computes_returns():
         features_df, ohlcv_df, pd.Timestamp("2024-01-02"), pd.Timestamp("2024-01-03")
     )
 
-    # 구간 밖(1/1, 1/4)은 제외되고, 구간 안(1/2,1/3)만 남되 realized_return이
-    # 없는 마지막 유효 행(1/3, 다음날 1/4의 종가는 구간 밖이지만 계산엔 쓸 수
-    # 있음)까지 포함되는지 확인
-    assert set(df["date"]) <= {pd.Timestamp("2024-01-02"), pd.Timestamp("2024-01-03")}
-    row = df[df["date"] == pd.Timestamp("2024-01-02")].iloc[0]
-    assert row["realized_return"] == pytest.approx(121.0 / 110.0 - 1)
+    # 구간 밖(1/1, 1/4)은 결과 행으로 나오지 않되, 구간 안 마지막 날(1/3)의
+    # realized_return을 구하려면 구간 밖인 1/4의 종가가 내부적으로 쓰여야 한다
+    # — 먼저 자르고 계산하면 1/3이 "다음 행 없음"으로 NaN 처리돼 사라지는 게
+    # 실제로 겪은 버그였다(RL 롤아웃은 구간 끝까지 꽉 채워 쓰는데 이 함수만
+    # 하루 짧아짐). 반드시 구간의 마지막 날짜(date_end)가 살아있는지 검증한다.
+    assert set(df["date"]) == {pd.Timestamp("2024-01-02"), pd.Timestamp("2024-01-03")}
+    row_0102 = df[df["date"] == pd.Timestamp("2024-01-02")].iloc[0]
+    assert row_0102["realized_return"] == pytest.approx(121.0 / 110.0 - 1)
+    row_0103 = df[df["date"] == pd.Timestamp("2024-01-03")].iloc[0]
+    assert row_0103["realized_return"] == pytest.approx(133.1 / 121.0 - 1)
 
 
 class _AlwaysBuyModel:
@@ -117,3 +123,27 @@ def test_positioning_stats_exclude_forced_final_liquidation():
 
     assert stats["avg_n_holding"] > 0  # 마지막 강제청산(0)에 끌려 내려가지 않음
     assert stats["avg_cash_weight"] < 1.0
+
+
+def test_load_checkpoint_checked_rejects_include_event_features_mismatch(tmp_path):
+    """체크포인트가 include_event_features=True로 학습됐는데 평가가 False로
+    패널을 만들면 관측 차원이 어긋나 sklearn/SB3 내부에서 알아보기 힘든 shape
+    에러가 난다 — 이름 붙은 명확한 에러로 먼저 막아야 한다."""
+    panel = _make_panel(40, n_tickers=3)
+    model, scaler = train_policy(
+        panel,
+        train_end_idx=30,
+        total_timesteps=32,
+        episode_length_days=10,
+        seed=0,
+        ppo_params={"n_steps": 16, "batch_size": 8},
+    )
+    save_checkpoint(model, scaler, tmp_path, "rl_policy_fold1", {"fold": 1, "include_event_features": True})
+
+    with pytest.raises(ValueError, match="include_event_features"):
+        _load_checkpoint_checked(tmp_path, "rl_policy_fold1", include_event_features=False)
+
+    # 값이 일치하면 정상적으로 로드돼야 함
+    loaded_model, loaded_scaler = _load_checkpoint_checked(tmp_path, "rl_policy_fold1", include_event_features=True)
+    assert loaded_model is not None
+    assert loaded_scaler is not None

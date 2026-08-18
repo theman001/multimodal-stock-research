@@ -1,7 +1,11 @@
+import pickle
+
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.preprocessing import StandardScaler
 
+import src.rl.panel as panel_module
 from src.features.indicators import BASE_FEATURE_COLUMNS, EVENT_FEATURE_COLUMNS
 from src.rl.panel import (
     MODEL_V3_PROB_COLUMN,
@@ -201,3 +205,50 @@ def test_market_id_inconsistent_across_dates_raises():
     )
     with pytest.raises(ValueError):
         build_grid(features_df, ohlcv_df, ["AAA"])
+
+
+class _RecordingModel:
+    """predict_proba에 실제로 들어온 X를 기록하는 가짜 모델 — model_v3.json을
+    실제로 로드하지 않고도 "스케일링된 입력이 들어오는가"를 검증하기 위함."""
+
+    def __init__(self):
+        self.received_X: pd.DataFrame | None = None
+
+    def load_model(self, path):
+        pass
+
+    def predict_proba(self, X):
+        self.received_X = X.copy()
+        n = len(X)
+        return np.column_stack([np.zeros(n), np.zeros(n)])
+
+
+def test_score_model_v3_probabilities_scales_before_predicting(tmp_path, monkeypatch):
+    """model_v3는 스케일링된 입력으로 학습됐다 — raw 값을 그대로 넣으면 트리
+    분기 임계값이 완전히 다른 분포를 보게 돼 사실상 무작위 예측이 나온다(실측:
+    raw 입력과 스케일링된 입력의 예측 상관계수가 0.044로 사실상 무관 — 실제로
+    겪은 버그). 스케일러가 실제로 적용된 뒤 모델에 들어가는지 직접 검증한다."""
+    all_cols = list(BASE_FEATURE_COLUMNS) + list(EVENT_FEATURE_COLUMNS)
+    features_df = pd.DataFrame({c: [1.0, 3.0, 5.0] for c in all_cols})
+    features_df["market_id"] = [0, 1, 0]
+    features_df["size_id"] = [2, 1, 0]
+
+    scaler = StandardScaler()
+    scaler.fit(pd.DataFrame({c: [0.0, 2.0, 4.0, 6.0] for c in all_cols}))
+    checkpoints_dir = tmp_path / "checkpoints"
+    checkpoints_dir.mkdir()
+    with open(checkpoints_dir / "scaler.pkl", "wb") as f:
+        pickle.dump(scaler, f)
+
+    recording_model = _RecordingModel()
+    monkeypatch.setattr(panel_module, "XGBClassifier", lambda: recording_model)
+
+    panel_module.score_model_v3_probabilities(features_df, tmp_path)
+
+    expected_scaled_all = scaler.transform(features_df[all_cols])
+    expected_base = expected_scaled_all[:, : len(BASE_FEATURE_COLUMNS)]
+    actual_base = recording_model.received_X[list(BASE_FEATURE_COLUMNS)].to_numpy()
+
+    np.testing.assert_allclose(actual_base, expected_base, atol=1e-8)
+    # 회귀 방지 핵심: raw 값 그대로 넘어가면 절대 안 됨
+    assert not np.allclose(actual_base, features_df[list(BASE_FEATURE_COLUMNS)].to_numpy())
