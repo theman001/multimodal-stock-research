@@ -235,4 +235,10 @@ def run(
 if __name__ == "__main__":
     # n_envs=8/n_steps=256(버퍼=2048)은 이 저장소 로컬 4코어 환경에서 실측 검증된
     # 설정(13.90ms/step, CLAUDE.md "Phase 3 구체 사양" > "연산 자원" 참고).
-    run(total_timesteps_per_fold=500_000, n_envs=8, ppo_params={"n_steps": 256})
+    # verbose=1: 장시간(약 11.6시간 추정) 무인 실행이라 SB3 자체 롤아웃 로그
+    # (ep_rew_mean 등)를 nohup 로그 파일로 남겨 진행 상황을 볼 수 있게 한다.
+    run(
+        total_timesteps_per_fold=500_000,
+        n_envs=8,
+        ppo_params={"n_steps": 256, "verbose": 1},
+    )
