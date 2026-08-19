@@ -1,0 +1,10 @@
+{
+  "fold": 5,
+  "trained_at": "2026-08-18T11:22:52.219384+00:00",
+  "total_timesteps": 500000,
+  "train_end_idx": 2452,
+  "test_start_idx": 2495,
+  "test_end_idx": 2943,
+  "include_event_features": true,
+  "n_envs": 8
+}

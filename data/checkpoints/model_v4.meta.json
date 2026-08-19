@@ -1,0 +1,98 @@
+{
+  "version": 4,
+  "trained_at": "2026-08-17T13:07:15.345222+00:00",
+  "hyperparameters": {
+    "max_depth": 4,
+    "n_estimators": 300,
+    "learning_rate": 0.05,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "eval_metric": "logloss",
+    "enable_categorical": true,
+    "random_state": 42
+  },
+  "train_rows": 189280,
+  "test_rows": 59150,
+  "feature_columns": [
+    "ma5_ratio",
+    "ma20_ratio",
+    "ma60_ratio",
+    "rsi14",
+    "macd",
+    "macd_signal",
+    "macd_hist",
+    "bb_pctb",
+    "vol_chg5",
+    "volatility20",
+    "momentum5",
+    "momentum20",
+    "momentum60",
+    "event_count_5d",
+    "event_sentiment_latest",
+    "event_sentiment_mean5d",
+    "days_since_last_event"
+  ],
+  "overall_metrics": {
+    "n": 59150,
+    "accuracy": 0.518647506339814,
+    "precision": 0.5261066299429471,
+    "recall": 0.44870633242726266,
+    "roc_auc": 0.5234767101047954
+  },
+  "cell_metrics": [
+    {
+      "market_id": 0,
+      "size_id": 0,
+      "n": 8099,
+      "accuracy": 0.5191999012223731,
+      "precision": 0.5320401801177693,
+      "recall": 0.7204502814258912,
+      "roc_auc": 0.5118433701637186
+    },
+    {
+      "market_id": 0,
+      "size_id": 1,
+      "n": 9045,
+      "accuracy": 0.5110005527915976,
+      "precision": 0.5329224781057411,
+      "recall": 0.6804721474425347,
+      "roc_auc": 0.5007626332919823
+    },
+    {
+      "market_id": 0,
+      "size_id": 2,
+      "n": 12701,
+      "accuracy": 0.5186993150145658,
+      "precision": 0.5250938549693737,
+      "recall": 0.8027488294819514,
+      "roc_auc": 0.5011931483954563
+    },
+    {
+      "market_id": 1,
+      "size_id": 0,
+      "n": 6509,
+      "accuracy": 0.5272699339376248,
+      "precision": 0.4900332225913621,
+      "recall": 0.09624796084828711,
+      "roc_auc": 0.5028137925285102
+    },
+    {
+      "market_id": 1,
+      "size_id": 1,
+      "n": 9258,
+      "accuracy": 0.5260315402894794,
+      "precision": 0.47904761904761906,
+      "recall": 0.11579189686924493,
+      "roc_auc": 0.5113600803057525
+    },
+    {
+      "market_id": 1,
+      "size_id": 2,
+      "n": 13538,
+      "accuracy": 0.5141823016693751,
+      "precision": 0.5291005291005291,
+      "recall": 0.1348112642300779,
+      "roc_auc": 0.5113529778799335
+    }
+  ]
+}

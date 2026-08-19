@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "trained_at": "2026-08-11T15:01:03.817398+00:00",
+  "hyperparameters": {
+    "max_depth": 4,
+    "n_estimators": 300,
+    "learning_rate": 0.05,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "eval_metric": "logloss",
+    "enable_categorical": true
+  },
+  "train_rows": 243224,
+  "test_rows": 61928,
+  "feature_columns": [
+    "ma5_ratio",
+    "ma20_ratio",
+    "ma60_ratio",
+    "rsi14",
+    "macd",
+    "macd_signal",
+    "macd_hist",
+    "bb_pctb",
+    "vol_chg5",
+    "volatility20",
+    "momentum5",
+    "momentum20",
+    "momentum60"
+  ],
+  "overall_metrics": {
+    "n": 61928,
+    "accuracy": 0.5193127502906602,
+    "precision": 0.5257854179016005,
+    "recall": 0.482574327135405,
+    "roc_auc": 0.5250718359239857
+  },
+  "cell_metrics": [
+    {
+      "market_id": 0,
+      "size_id": 0,
+      "n": 10639,
+      "accuracy": 0.5148980167308957,
+      "precision": 0.521657486229344,
+      "recall": 0.75667332485927,
+      "roc_auc": 0.5114493974295593
+    },
+    {
+      "market_id": 0,
+      "size_id": 1,
+      "n": 10640,
+      "accuracy": 0.5153195488721805,
+      "precision": 0.5317193164163646,
+      "recall": 0.72728882592527,
+      "roc_auc": 0.5065189724973915
+    },
+    {
+      "market_id": 0,
+      "size_id": 2,
+      "n": 10640,
+      "accuracy": 0.5265037593984963,
+      "precision": 0.5334859759587864,
+      "recall": 0.8287391072381292,
+      "roc_auc": 0.507489208574184
+    },
+    {
+      "market_id": 1,
+      "size_id": 0,
+      "n": 5473,
+      "accuracy": 0.528594920518911,
+      "precision": 0.5398457583547558,
+      "recall": 0.08042895442359249,
+      "roc_auc": 0.5212512053905145
+    },
+    {
+      "market_id": 1,
+      "size_id": 1,
+      "n": 10979,
+      "accuracy": 0.5280080153019401,
+      "precision": 0.5015600624024961,
+      "recall": 0.12398765908214424,
+      "roc_auc": 0.5073725393940278
+    },
+    {
+      "market_id": 1,
+      "size_id": 2,
+      "n": 13557,
+      "accuracy": 0.5094784981928155,
+      "precision": 0.5044904334244436,
+      "recall": 0.19361606473849843,
+      "roc_auc": 0.51073356400902
+    }
+  ]
+}

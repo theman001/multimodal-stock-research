@@ -1,0 +1,94 @@
+{
+  "version": 3,
+  "trained_at": "2026-08-11T16:27:34.044735+00:00",
+  "hyperparameters": {
+    "max_depth": 4,
+    "n_estimators": 300,
+    "learning_rate": 0.05,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "eval_metric": "logloss",
+    "enable_categorical": true,
+    "random_state": 42
+  },
+  "train_rows": 189280,
+  "test_rows": 59150,
+  "feature_columns": [
+    "ma5_ratio",
+    "ma20_ratio",
+    "ma60_ratio",
+    "rsi14",
+    "macd",
+    "macd_signal",
+    "macd_hist",
+    "bb_pctb",
+    "vol_chg5",
+    "volatility20",
+    "momentum5",
+    "momentum20",
+    "momentum60"
+  ],
+  "overall_metrics": {
+    "n": 59150,
+    "accuracy": 0.5169399830938293,
+    "precision": 0.5240694204491911,
+    "recall": 0.4479009362730293,
+    "roc_auc": 0.5233073597235351
+  },
+  "cell_metrics": [
+    {
+      "market_id": 0,
+      "size_id": 0,
+      "n": 8099,
+      "accuracy": 0.516977404617854,
+      "precision": 0.5305980528511822,
+      "recall": 0.7157598499061913,
+      "roc_auc": 0.5108900567744019
+    },
+    {
+      "market_id": 0,
+      "size_id": 1,
+      "n": 9045,
+      "accuracy": 0.5101160862354892,
+      "precision": 0.5327949901120633,
+      "recall": 0.6694967902257196,
+      "roc_auc": 0.5033747622189311
+    },
+    {
+      "market_id": 0,
+      "size_id": 2,
+      "n": 12701,
+      "accuracy": 0.5138965435792457,
+      "precision": 0.5221352877092206,
+      "recall": 0.796254342244374,
+      "roc_auc": 0.49797940315503303
+    },
+    {
+      "market_id": 1,
+      "size_id": 0,
+      "n": 6509,
+      "accuracy": 0.5225072975879551,
+      "precision": 0.4714475431606906,
+      "recall": 0.11582381729200653,
+      "roc_auc": 0.5003146119785599
+    },
+    {
+      "market_id": 1,
+      "size_id": 1,
+      "n": 9258,
+      "accuracy": 0.5258155109094836,
+      "precision": 0.4789762340036563,
+      "recall": 0.12062615101289134,
+      "roc_auc": 0.5096891909161707
+    },
+    {
+      "market_id": 1,
+      "size_id": 2,
+      "n": 13538,
+      "accuracy": 0.515585758605407,
+      "precision": 0.5346244131455399,
+      "recall": 0.13645895745955663,
+      "roc_auc": 0.5159174889052149
+    }
+  ]
+}

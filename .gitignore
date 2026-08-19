@@ -2,7 +2,6 @@ __pycache__/
 *.pyc
 .venv/
 venv/
-checkpoints/
 *.ckpt
 .env
 .ipynb_checkpoints/
