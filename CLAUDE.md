@@ -54,7 +54,8 @@ progress_log.json      # 세션 재개용 상태 파일
 - 2015-01-01 ~ 스크립트 실행 시점
 
 ### 저장 형식
-- Parquet. `${DATA_ROOT}/raw/{kr,us}/`(원본 캐시), `${DATA_ROOT}/processed/`(가공본), `${DATA_ROOT}/checkpoints/`(모델), `${DATA_ROOT}/reports/`(백테스트 리포트) — 전부 `.gitignore` 처리됨, git에 데이터/체크포인트를 커밋하지 않는다
+- Parquet. `${DATA_ROOT}/raw/{kr,us}/`(원본 캐시), `${DATA_ROOT}/processed/`(가공본), `${DATA_ROOT}/checkpoints/`(모델), `${DATA_ROOT}/reports/`(백테스트 리포트).
+- **2026-08-18부터 `data/`를 git에 커밋한다**(사용자 명시 지시 — Colab에서 매번 파일 업로드 없이 바로 clone만으로 필요한 데이터가 갖춰지게 하려는 목적). 그 이전에는 전부 `.gitignore` 처리돼 커밋하지 않았음. 커밋 시점 크기 참고: 376MB, 약 4,900개 파일 — `features.parquet`/체크포인트처럼 자주 재생성되는 바이너리가 매번 새 버전으로 히스토리에 쌓이므로, 저장소가 실제 폴더 크기보다 빠르게 불어난다는 점을 인지하고 진행할 것.
 
 ### 타겟 변수
 ```
@@ -112,10 +113,11 @@ S&P 지수 계열을 그대로 사용합니다. **S&P 500을 대형/중소형으
 
 ## 경로 규칙 (`DATA_ROOT`)
 
-- 로컬 개발: 저장소 기준 `./data` (git에는 커밋하지 않음, `.gitignore` 처리됨)
+- 로컬 개발: 저장소 기준 `./data` (2026-08-18부터 git에 커밋됨 — "저장 형식" 절 참고)
 - Colab 실행: `/content/drive` 존재 여부로 감지 → `/content/drive/MyDrive/주식프로젝트/multimodal-stock-research/`
 - 코드에서는 하드코딩하지 말고 `DATA_ROOT` 환경변수 또는 자동 감지 로직으로 분기할 것
 - **Colab에서는 저장소 자체를 매 세션 GitHub에서 새로 `git clone`하는 것을 기본으로 한다** (Drive FUSE 마운트 위에서 `.git`을 직접 다루면 느리고 불안정함). 즉 저장소 코드는 세션마다 사라져도 되는 휘발성으로 취급하고, **데이터·체크포인트·진행 상태처럼 반드시 남아야 하는 것만 `DATA_ROOT`(Drive)에 둔다.**
+- **주의**: `data/`가 git에 커밋돼 있어도(위 참고) Colab에서 Drive를 마운트하면 `get_data_root()`는 여전히 Drive 경로를 우선한다 — clone된 저장소 안의 `./data`를 자동으로 쓰지 않는다. 그래서 Colab에서 매 파일 업로드 없이 바로 쓰려면, clone 직후 `./data`를 Drive의 `DATA_ROOT` 경로로 한 번 복사(`cp -r`)해줘야 한다. 이렇게 해야 (1) git clone만으로 파일이 안 빠지고 (2) 학습 중 체크포인트도 Drive에 남아 세션이 끊겨도 살아남는다는 두 목적을 동시에 만족한다.
 
 ## 진행 로그 프로토콜 (`progress_log.json`)
 
