@@ -27,7 +27,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecEnv
 from src.config import get_data_root
 from src.models.split import split_train_test
 from src.models.walk_forward import generate_walk_forward_folds
-from src.rl.obs_scaler import fit_obs_scaler, load_obs_scaler, save_obs_scaler
+from src.rl.obs_scaler import fit_obs_scaler, load_obs_scaler, save_obs_scaler, transform_obs_features
 from src.rl.panel import Panel, build_panel
 from src.rl.trading_env import EPISODE_LENGTH_DAYS, TradingEnv
 
@@ -122,13 +122,21 @@ def train_policy(
     아니라 DummyVecEnv(단일 프로세스 내 순차 스텝)를 쓰는 이유: env.step() 자체는
     이미 충분히 빠르므로(0.14ms) 프로세스 분리로 얻는 이득은 적은 반면, panel
     배열(수십MB)을 서브프로세스마다 복제하는 오버헤드만 늘어난다.
+
+    스케일링된 관측 배열(obs_features)은 여기서 딱 한 번만 계산해서 모든
+    n_envs개 TradingEnv가 같은 배열을 공유하게 한다 — 각 env가 생성 시점에
+    자기 몫을 따로 transform_obs_features()로 계산하면(예전 구현) n_envs=8
+    기준 전체 패널(~30MB)의 8배 중복 복제+스케일링이 매 폴드마다 일어나
+    11시간짜리 실학습 내내 낭비됐다(실측: 리뷰로 발견). numpy 배열은
+    obs_features를 읽기 전용으로만 쓰므로 여러 env가 안전하게 공유할 수 있다.
     """
     scaler = fit_obs_scaler(panel, train_end_date=panel.dates[train_end_idx])
+    obs_features = transform_obs_features(panel, scaler)
 
     if n_envs == 1:
         env: TradingEnv | VecEnv = TradingEnv(
             panel,
-            scaler=scaler,
+            obs_features=obs_features,
             date_start_idx=train_start_idx,
             date_end_idx=train_end_idx,
             episode_length_days=episode_length_days,
@@ -138,7 +146,7 @@ def train_policy(
         def _make_env():
             return TradingEnv(
                 panel,
-                scaler=scaler,
+                obs_features=obs_features,
                 date_start_idx=train_start_idx,
                 date_end_idx=train_end_idx,
                 episode_length_days=episode_length_days,

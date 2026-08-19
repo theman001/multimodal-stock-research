@@ -62,6 +62,12 @@ class TradingEnv(gym.Env):
     panel: src.rl.panel.build_panel()의 결과. scaler를 주면(fit_obs_scaler로
     미리 fit된 것) 생성 시점에 한 번만 transform해서 들고 있는다 — 매 step()마다
     다시 스케일링하지 않는다.
+    obs_features: 이미 transform_obs_features()로 변환해둔 배열이 있으면 직접
+    넘긴다 — DummyVecEnv로 n_envs개를 동시에 띄울 때(train_agent.py) 환경마다
+    각자 전체 패널을 다시 스케일링하면 8배 중복 연산 + 배열 8벌 중복 보유가
+    되므로, 호출하는 쪽에서 한 번만 transform해서 모든 환경이 같은 배열을
+    공유하게 하기 위함(numpy 배열은 읽기 전용으로만 쓰이므로 공유해도 안전).
+    주면 scaler는 무시된다.
     date_start_idx/date_end_idx: panel.dates 상에서 이 환경이 쓸 수 있는 구간
     (예: 어떤 walk-forward 폴드의 train 구간, 또는 공식 test.parquet 구간).
     random_start=True(학습용): reset()마다 이 구간 내에서 무작위 시작점을 뽑아
@@ -75,6 +81,7 @@ class TradingEnv(gym.Env):
         self,
         panel: Panel,
         scaler: StandardScaler | None = None,
+        obs_features: np.ndarray | None = None,
         date_start_idx: int = 0,
         date_end_idx: int | None = None,
         episode_length_days: int = EPISODE_LENGTH_DAYS,
@@ -101,9 +108,12 @@ class TradingEnv(gym.Env):
         if random_start and (self.date_end_idx - self.date_start_idx + 1) < episode_length_days:
             raise ValueError("지정된 날짜 구간이 episode_length_days보다 짧음")
 
-        self.obs_features = (
-            transform_obs_features(panel, scaler) if scaler is not None else panel.features
-        )
+        if obs_features is not None:
+            self.obs_features = obs_features
+        elif scaler is not None:
+            self.obs_features = transform_obs_features(panel, scaler)
+        else:
+            self.obs_features = panel.features
 
         self.action_space = spaces.MultiDiscrete([3] * self.n)
         obs_dim = self.n * self.d_per_ticker + 4

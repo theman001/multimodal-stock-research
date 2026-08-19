@@ -198,3 +198,23 @@ def test_extreme_price_move_clips_reward_but_not_true_nav():
     assert info["raw_reward"] == pytest.approx(np.log(20.0 / 100.0))  # 실제 하락폭 그대로
     assert reward == pytest.approx(-REWARD_CLIP)  # 학습 신호는 클리핑됨
     assert info["nav"] == pytest.approx(env.nav)  # NAV 장부는 클리핑과 무관하게 정확
+
+
+def test_precomputed_obs_features_are_used_directly_without_rescaling():
+    """obs_features를 직접 넘기면 scaler는 무시하고 그 배열을 그대로 써야 한다
+    — train_agent.py가 n_envs개 환경에 스케일링된 배열을 한 번만 계산해 공유할
+    수 있으려면 이 경로가 필요하다(각 환경이 생성 시점에 다시
+    transform_obs_features()를 부르면 n_envs배 중복 연산이 된다)."""
+    close = np.full((3, 2), 100.0)
+    panel = _make_panel(3, close, np.ones((3, 2)), market_id=[0, 1])
+
+    custom_obs_features = np.full((3, 2, 3), 7.0, dtype=np.float32)
+    env = TradingEnv(
+        panel,
+        obs_features=custom_obs_features,
+        date_start_idx=0,
+        date_end_idx=2,
+        random_start=False,
+    )
+
+    assert env.obs_features is custom_obs_features  # 새로 계산하지 않고 그대로 참조

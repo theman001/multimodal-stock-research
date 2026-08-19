@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import src.rl.train_agent as train_agent_module
 from src.models.split import split_train_test
 from src.models.walk_forward import generate_walk_forward_folds
 from src.rl.panel import Panel
@@ -194,3 +195,32 @@ def test_load_checkpoint_meta_round_trips_saved_metadata(tmp_path):
 
     assert meta["fold"] == 1
     assert meta["include_event_features"] is True
+
+
+def test_train_policy_transforms_obs_features_once_regardless_of_n_envs(monkeypatch):
+    """n_envs개 환경을 띄우면서 각자 전체 패널을 다시 스케일링하면(예전 구현)
+    n_envs배 중복 연산 + 중복 메모리가 된다 — 11시간짜리 실학습 내내 낭비됐던
+    실제 문제(리뷰로 발견). transform_obs_features()가 n_envs와 무관하게
+    정확히 한 번만 호출되는지 직접 센다."""
+    panel = _make_panel(40, n_tickers=3)
+    call_count = 0
+    original = train_agent_module.transform_obs_features
+
+    def _counting_transform(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(train_agent_module, "transform_obs_features", _counting_transform)
+
+    train_policy(
+        panel,
+        train_end_idx=30,
+        total_timesteps=32,
+        episode_length_days=10,
+        seed=0,
+        n_envs=4,
+        ppo_params={"n_steps": 8, "batch_size": 8},
+    )
+
+    assert call_count == 1
