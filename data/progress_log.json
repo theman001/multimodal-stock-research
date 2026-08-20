@@ -1,6 +1,6 @@
 {
   "phase": "4",
-  "last_completed_step": "phase4_kr_step4_review_round2",
+  "last_completed_step": "phase4_kr_step4_cron_and_docs",
   "steps": [
     {
       "step": "us_data_collection",
@@ -499,9 +499,15 @@
       "status": "done",
       "timestamp": "2026-08-20T09:01:22.279753+00:00",
       "output": "review-loop(decide_kr/execute_kr) 2차: BUY 실패 격리(1차 수정) 이후 SELL 주문 실패는 여전히 전체 사이클을 중단시키는 비대칭 구조가 남는지 확인 — 재구성 체크를 통과한 뒤 SELL이 실패하는 건 계좌 상태 자체가 의심스러운 더 심각한 신호라 fail-safe로 전체 중단하는 게 합리적이라 판단, 구체적 트리거 없이 손대지 않음. try/except 안의 continue가 qty<=0/예외 두 경로 모두 올바르게 다음 루프로 넘어가는지, 1차 수정이 BUY 부분성공 시 save_state()/last_executed_date 저장을 오히려 더 안전하게 만드는 부수효과가 있는지도 재확인. decide_kr.py의 티커 매핑 통합 지점도 재점검(문제 없음, decide_us.py와 동일 검증된 패턴). 수정 내역 없음. pytest tests/ -v 398개 전체 통과, leakage-guard 통과."
+    },
+    {
+      "step": "phase4_kr_step4_cron_and_docs",
+      "status": "done",
+      "timestamp": "2026-08-20T09:11:51.975732+00:00",
+      "output": "Phase 4 KR 4단계 마무리: src/live/cron_kr.txt 신규(cron_us.txt와 동일 형식, decide 07:00 KST/execute 09:00~09:55 KST 5분마다 — KR은 09:00 정시 개장·DST 없어 US의 넓은 창보다 좁혀도 됨) — 참고용 crontab 스니펫만 준비, 시스템 crontab에는 설치 안 함(KIS 앱키 미설정, 무인 운영은 별도 승인 필요). execute_kr.py 모듈 docstring의 시간창 서술을 cron_kr.txt와 일치하도록 09:00~09:55로 정정. notify.py는 재작성 없이 그대로 재사용(decide_kr.py/execute_kr.py에 이미 send_notification 연동 완료돼 있어 별도 5단계 작업 불필요 — CLAUDE.md Phase4 DoD 갱신). CLAUDE.md 로드맵 요약/Phase4 문단/DoD 체크리스트를 KR 트랙 완료 상태로 갱신(전부 US 전용 서술이었던 것을 KR/US 병기로 수정). pytest tests/ -v 398개 전체 통과."
     }
   ],
-  "next_action": "Phase 4 KR 원자적 순서 4단계 — plan/10 §C-4 4번: safety.py는 US 트랙에서 이미 track 파라미터로 격리된 공유 모듈이라 그대로 재사용(재작성 금지). decide_kr.py/execute_kr.py 신규 작성(decide_us.py/execute_us.py를 KR 시장 필터로 구조 그대로 미러링하되, KIS는 notional 미지원이므로 compute_target_allocations()가 만드는 notional을 execute_kr.py에서 정수 qty로 변환하는 로직을 명시적으로 설계해야 함 — kis.py::place_market_order()가 notional을 거부하도록 이미 구현됨, 가격 조회 방법 결정 필요). cron 등록은 decide 07:00 KST / execute 09:00 KST(plan/10 §B-6) 준비만 해두고 실제 시스템 crontab 설치는 보류 (KIS 앱키 미설정, 무인 운영은 별도 승인 필요).",
+  "next_action": "Phase 4 KR 트랙 코드 구현(1~5단계 상당) 전부 완료 — plan/10 §C-4 6번: 일정 기간 모의투자 무인 운영 시작은 이 세션이 결정하지 않고 반드시 별도 사용자 재승인 필요. 선행 조건(사용자 액션): (1) KIS 모의투자 앱키/시크릿/계좌번호 발급 후 .env에 KIS_PAPER_APP_KEY/KIS_PAPER_APP_SECRET/KIS_PAPER_CANO/KIS_PAPER_ACNT_PRDT_CD 설정 (2) MATTERMOST_WEBHOOK_URL .env 설정(US 트랙과 공유, 이미 설정됐다면 KR도 자동 적용됨) (3) 사용자가 cron_kr.txt 설치를 명시적으로 승인. 그 전까지 KIS 실제 API TR_ID/응답 필드명(broker/kis.py 모듈 docstring에 재확인 필요라고 명시된 항목들)을 첫 스모크 테스트로 검증하는 것도 권장. US 트랙(cron_us.txt)도 동일하게 대기 중 — 두 트랙 모두 코드/테스트/review-loop 검증까지 완료된 상태.",
   "blockers": [
     "Alpaca 모의투자 API 키(.env)가 아직 미설정 — 실제 cron 가동 전 사용자가 발급/설정 필요",
     "MATTERMOST_WEBHOOK_URL(.env)이 아직 미설정 — 알림이 stderr 로그로만 남고 실제 Mattermost에는 전송되지 않음, 사용자가 webhook URL 설정 필요"

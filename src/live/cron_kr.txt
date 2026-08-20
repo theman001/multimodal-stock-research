@@ -1,0 +1,37 @@
+# Phase 4 KR 트랙 — cron 등록 예시(plan/10 §B-6 근거).
+#
+# 이 파일은 참고용 crontab 스니펫이다 — 시스템 crontab에 아직 설치되지
+# 않았다(설치는 "이 시스템이 무인으로 실제 API를 호출하기 시작한다"는
+# 상태 전환이라 명시적 승인 없이 자동으로 하지 않음). 설치하려면:
+#   crontab -e
+# 로 열어 아래 두 줄을 붙여넣거나, 이 파일 자체를 합치려면:
+#   (crontab -l 2>/dev/null; cat src/live/cron_kr.txt | grep -v '^#') | crontab -
+#
+# 사전 준비물(설치 전에 반드시 확인):
+#   - .env에 KIS_PAPER_APP_KEY/KIS_PAPER_APP_SECRET/KIS_PAPER_CANO/
+#     KIS_PAPER_ACNT_PRDT_CD 설정(KIS 모의투자 계좌·앱키 발급 필요 —
+#     plan/10 §D "사용자 책임 영역")
+#   - REPO_PATH를 이 저장소의 실제 절대경로로 바꿀 것
+#   - .venv가 REPO_PATH/.venv에 있다고 가정(다르면 python 경로 수정)
+#   - ${DATA_ROOT}/live/logs/ 디렉터리는 자동 생성됨(각 스크립트가 mkdir)
+#
+# 시각 근거(plan/10 §B-6): KR장 15:30 KST 마감, US장 05:00~06:00 KST(DST)
+# 마감 — decide는 그 둘이 다 확정된 07:00 KST에 실행(cron_us.txt와 동일
+# 시각, US 트랙과 겹쳐도 안전함 — decide_kr.py/decide_us.py는 서로 다른
+# 브로커 계좌·락 이름("decide_kr"/"decide_us")·결정 파일("kr_{date}.json"/
+# "us_{date}.json")을 쓴다). execute는 KR장 개장(09:00 KST 정시, DST 없음 —
+# 미국과 달리 개장 시각이 연중 고정이라 US의 22:00~23:50 같은 넓은 창이
+# 애초에 필요 없음)에 맞춰 정각 한 시간만 5분 간격으로 폴링한다.
+# execute_kr.py 자체가 KISBroker.is_market_open()으로 실행 시점에 직접
+# 확인하므로(휴장일이면 조용히 종료, 이미 그날 체결이 끝났으면
+# last_executed_date로 멱등적으로 건너뜀), 정확히 09:00:00에 못 맞고 몇 분
+# 늦게 도는 cron 지연/시스템 시계 오차에도 안정적이다.
+
+REPO_PATH=/home/taeuk/projects/multimodal-stock-research
+
+# decide: 매일 07:00 KST — 결정만 저장, 브로커 주문 없음
+0 7 * * * cd REPO_PATH && .venv/bin/python -m src.live.decide_kr >> data/live/logs/decide_kr.log 2>&1
+
+# execute: 09:00~09:55 KST, 5분마다 — is_market_open()이 False면 즉시 종료,
+# last_executed_date로 같은 날 중복 체결 방지
+*/5 9 * * * cd REPO_PATH && .venv/bin/python -m src.live.execute_kr >> data/live/logs/execute_kr.log 2>&1
