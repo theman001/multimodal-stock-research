@@ -477,7 +477,7 @@
       "output": "review-loop(kis.py) 2차: avg_entry_price=0(무상증자 등으로 취득가가 0으로 잡히는 경우)/음수 hldg_qty(원칙상 불가능해야 하나 KIS가 어겼을 경우) 두 시나리오를 get_positions() 관점에서 재점검 — 둘 다 observation.py가 이미 방어(avg_entry_price<=0이면 unrealized_return을 0으로 가드, qty<0은 애초에 숏 포지션으로 정의된 정상 입력이라 에러 아님)하고 있음을 확인, kis.py 자체 수정 불필요. 수정 내역 없음."
     }
   ],
-  "next_action": "Phase 4 KR 트랙 원자적 순서 2단계 — plan/10 §C-4 2번: observation.py/infer.py/allocation.py는 US 트랙에서 이미 구현된 공유 모듈이라 그대로 재사용(재작성 금지, CLAUDE.md Phase4 DoD 확인). KR 트랙은 3단계(src/live/broker/kis.py, KIS Open API 모의투자 도메인 openapivts.koreainvestment.com:29443, 정수 주식 수량, mode 파라미터로 도메인/앱키만 분기)부터 사용자 승인 받고 착수.",
+  "next_action": "Phase 4 KR 원자적 순서 4단계 — plan/10 §C-4 4번: safety.py는 US 트랙에서 이미 track 파라미터로 격리된 공유 모듈이라 그대로 재사용(재작성 금지). decide_kr.py/execute_kr.py 신규 작성(decide_us.py/execute_us.py를 KR 시장 필터로 구조 그대로 미러링하되, KIS는 notional 미지원이므로 compute_target_allocations()가 만드는 notional을 execute_kr.py에서 정수 qty로 변환하는 로직을 명시적으로 설계해야 함 — kis.py::place_market_order()가 notional을 거부하도록 이미 구현됨, 가격 조회 방법 결정 필요). cron 등록은 decide 07:00 KST / execute 09:00 KST(plan/10 §B-6) 준비만 해두고 실제 시스템 crontab 설치는 보류 (KIS 앱키 미설정, 무인 운영은 별도 승인 필요).",
   "blockers": [
     "Alpaca 모의투자 API 키(.env)가 아직 미설정 — 실제 cron 가동 전 사용자가 발급/설정 필요",
     "MATTERMOST_WEBHOOK_URL(.env)이 아직 미설정 — 알림이 stderr 로그로만 남고 실제 Mattermost에는 전송되지 않음, 사용자가 webhook URL 설정 필요"
