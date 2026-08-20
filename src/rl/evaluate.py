@@ -238,14 +238,14 @@ def _write_report(official: dict, folds: list[dict], reports_dir: Path) -> Path:
     lines.append(f"생성 시각: {date.today().isoformat()}")
     lines.append("")
     lines.append(
-        "> ⚠️ **이 리포트의 RL 수치는 학습 시점과 다른 입력분포로 평가된 것이라 신뢰할 수 없다.** "
-        "`panel.py::score_model_v3_probabilities()`가 model_v3에 스케일링 안 된 raw 값을 넣던 버그를 "
-        "이 리포트를 만들면서 발견해 수정했다(raw vs 스케일링 입력의 예측 상관계수 0.044 — 사실상 무관). "
-        "그런데 지금 저장된 6개 정책은 전부 **그 버그가 있던 상태의 model_v3_prob 분포**를 보며 학습됐고, "
-        "이 리포트는 방금 **수정된(올바른) model_v3_prob 분포**로 그 정책들을 평가한 것이다 — 즉 학습 때 "
-        "본 적 없는 입력분포로 테스트하는 셈이라 train/eval이 어긋나 있다. 분류기 전략 벤치마크 수치와 "
-        "평가 구간(1일 절단 버그 수정)은 이 리포트에서 올바르게 고쳐졌지만, **RL 정책 자체의 수치는 "
-        "수정된 model_v3.py로 처음부터 재학습해야 신뢰할 수 있다.**"
+        "> ✅ **model_v3 스케일링 버그 수정 후 재학습된 정책의 평가 결과다.** "
+        "2026-08-18 전체 검토에서 `panel.py::score_model_v3_probabilities()`가 model_v3에 스케일링 "
+        "안 된 raw 값을 넣던 CRITICAL 버그를 발견·수정했고(raw vs 스케일링 입력의 예측 상관계수 0.044 — "
+        "사실상 무관), 이 버그로 학습된 구 정책(2026-08-18 09:xx 이전 체크포인트)은 폐기했다. "
+        "2026-08-19 04:03~14:45(약 10시간42분)에 수정된 코드로 6개 정책(폴드1~5 + 공식 단일분할)을 "
+        "`resume=False`로 전부 재학습했고, 이 리포트는 그 새 정책을 **학습과 동일한(수정된) "
+        "model_v3_prob 분포**로 평가한 것이다 — train/eval 입력분포가 일치하므로 아래 RL 수치는 신뢰할 "
+        "수 있다."
     )
     lines.append("")
     lines.append(

@@ -1,6 +1,6 @@
 {
   "fold": 3,
-  "trained_at": "2026-08-18T07:39:24.244159+00:00",
+  "trained_at": "2026-08-19T09:25:21.371051+00:00",
   "total_timesteps": 500000,
   "train_end_idx": 1471,
   "test_start_idx": 1513,

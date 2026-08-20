@@ -1,0 +1,7 @@
+[evaluate] fold 1 평가 완료: RL 누적수익률 10.5456%
+[evaluate] fold 2 평가 완료: RL 누적수익률 21.7263%
+[evaluate] fold 3 평가 완료: RL 누적수익률 -1.4329%
+[evaluate] fold 4 평가 완료: RL 누적수익률 48.9021%
+[evaluate] fold 5 평가 완료: RL 누적수익률 89.7491%
+[evaluate] 공식 단일분할 평가 완료: RL 누적수익률 101.0330%
+[evaluate] 리포트 저장 -> /home/taeuk/projects/multimodal-stock-research/data/reports/phase3_rl_backtest_report_v1.md

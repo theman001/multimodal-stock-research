@@ -1,6 +1,6 @@
 {
   "phase": "3",
-  "last_completed_step": "phase3_trading_env",
+  "last_completed_step": "phase3_reevaluate_after_retrain",
   "steps": [
     {
       "step": "us_data_collection",
@@ -211,13 +211,20 @@
       "status": "done",
       "timestamp": "2026-08-18T17:09:50.000000+00:00",
       "output": "사용자가 'phase 3를 코드, 결과 데이터 등 전체적으로 검토 후에 진행하자' 요청 — /code-review 스킬(high, 8940b61..HEAD, 8개 파인더 에이전트: line-by-line/removed-behavior/cross-file/reuse/simplification/efficiency/altitude/conventions)을 돌리는 동시에 결과 데이터를 직접 재검증하다가 코드리뷰 에이전트들과 별개로 CRITICAL 버그를 직접 발견함. **CRITICAL(직접 발견)**: src/rl/panel.py::score_model_v3_probabilities()가 model_v3에 스케일링 안 된 raw 피처를 그대로 넣고 있었음 — model_v3는 Phase 1에서 StandardScaler로 스케일링된 입력으로 학습됨. 실측: raw 입력 vs 올바르게 스케일링된 입력의 예측 상관계수 0.044(사실상 무관), 스케일링 적용 시 model_v3.meta.json의 원래 정확도(0.5169399830938293)와 정확히 일치 확인. 이 버그는 (a) 6개 학습된 정책 전부의 RL state 중 model_v3_prob 채널을 노이즈로 만들었고 (b) evaluate.py의 분류기 벤치마크를 오염시킴(공식분할 15.01%로 보고했으나 올바른 값은 27.09%, backtest_report_v3.md 원본 27.0859%와 거의 일치). 코드리뷰 에이전트(cross-file tracer)가 독립적으로 찾은 HIGH 버그: evaluate.py의 _window_realized_return_df가 날짜 필터링을 add_realized_return 호출보다 먼저 해서 각 종목의 구간 마지막 날이 실현수익률 NaN으로 dropna되어 사라짐 — RL 롤아웃(구간 끝까지 꽉 채움)과 벤치마크(하루 짧음) 비교 구간이 어긋나 있었음. 그 외 MEDIUM 5건(CLAUDE.md line 25 stale 승인 문구, evaluate.py의 include_event_features 검증 부재, TradingEnv._close_positions의 죽은 price_override 파라미터, ppo_params가 learning_rate/target_kl을 조용히 덮어쓸 수 있는 위험, evaluate.py의 initial_nav 하드코딩) + LOW 다수(재사용/효율성 — obs_scaler.py의 save/load가 scaling.py 복제, trading_env.py가 costs.py 로직 재구현, DummyVecEnv 8개가 각자 전체 패널을 재변환해 학습 내내 약 196MB 낭비+7배 중복연산 등). CRITICAL+HIGH+MEDIUM 전부 즉시 수정: panel.py에 scaler.pkl 스케일링 추가(주석으로 왜 17열 스케일러를 13열 model_v3에 안전하게 재사용 가능한지 근거 명시 — StandardScaler는 컬럼별 독립 계산), evaluate.py의 윈도우 확장 후 재절단으로 수정, CLAUDE.md line 25 갱신(Phase3 승인은 각 원자적 모듈의 '진행해' 승인이었음을 명시), include_event_features 교차검증(load_checkpoint_meta 신규 + _load_checkpoint_checked), price_override 죽은 파라미터 제거, ppo_params의 learning_rate/target_kl 덮어쓰기를 명시적 ValueError로 차단, initial_nav 하드코딩을 env.initial_nav 참조로 수정. 회귀 테스트 6건 신규(스케일링 적용 검증, 윈도우 마지막날 보존 검증, ppo_params 차단 검증, meta 왕복 검증, include_event_features 불일치 검증). pytest tests/ -v 172개 전체 통과. **중요한 2차 발견**: panel.py 수정 후 evaluate.py를 재실행해보니, 이미 학습된 6개 정책은 버그 있는(노이즈) model_v3_prob 분포를 보며 학습됐는데 지금은 수정된(올바른) model_v3_prob 분포로 평가받는 상황이 됨 — train/eval 입력분포 불일치. 즉 이번에 재생성한 리포트도 'RL 정책 자체의 수치'는 신뢰할 수 없고, 분류기 벤치마크/평가구간 수정만 유효함. 리포트 최상단에 이 사실을 경고 배너로 명시. 올바른 분류기 베이스라인으로 재계산해보니 RL이 분류기를 이긴다는 이전 결론도 더는 명확하지 않음(폴드별 paired CI 대부분이 0을 포함하도록 바뀜, 예: 폴드1 [-53.3%,37.5%], 폴드2 [-156.5%,80.3%]) — 재학습 없이는 'RL이 분류기보다 낫다'는 결론 자체를 유지할 근거가 약해짐. LOW 항목(재사용/효율성)은 이번엔 수정하지 않음(재학습 여부 결정 후, 재학습한다면 효율성 항목 먼저 고치는 게 유리 — DummyVecEnv 중복연산 수정만으로도 재학습 시간이 줄어들 수 있음)."
+    },
+    {
+      "step": "phase3_retrained_after_scaling_fix",
+      "status": "done",
+      "timestamp": "2026-08-19T14:45:21.237142+00:00",
+      "output": "data/checkpoints/rl_policy_fold{1..5}.zip, rl_policy_v1.zip (전부 수정된 score_model_v3_probabilities()로 재학습, resume=False, 2026-08-19 04:03~14:45 약 10시간42분 소요). 8월18일자 버그있던 구 체크포인트는 전부 덮어씀."
+    },
+    {
+      "step": "phase3_reevaluate_after_retrain",
+      "status": "done",
+      "timestamp": "2026-08-20T00:15:25.649034+00:00",
+      "output": "data/reports/phase3_rl_backtest_report_v1.md 재생성 — 재학습된 정책을 학습과 동일한(수정된) model_v3_prob 분포로 평가, train/eval 입력분포 일치로 RL 수치 신뢰 가능. 공식분할 RL 누적수익률 101.03%(vs 분류기 27.09%, Buy&Hold 89.55%), RL이 실제로는 저정교도 광범위분산 전략으로 수렴한 것으로 보인다는 해석 유의사항 포함."
     }
   ],
-  "next_action": "[사용자 결정 대기, CRITICAL] 버그 수정은 완료했으나, 이미 학습된 6개 정책은 버그가 있던 상태의 model_v3_prob 분포로 학습됐다 — 수정된 panel.py로 재평가하면 train/eval 입력분포가 어긋나 RL 정책 자체의 수치를 신뢰할 수 없다(분류기 벤치마크/평가구간 수정은 유효). 신뢰할 수 있는 RL 결과를 얻으려면 6개 정책을 처음부터 재학습해야 함(약 11시간 규모, 재학습 전에 발견된 효율성 문제(DummyVecEnv 8개가 각자 전체 패널을 재변환)를 먼저 고치면 더 빨라질 수 있음) — 재학습 여부와 시점을 사용자가 결정해야 함. 재학습하지 않기로 한다면 Phase 3의 결론은 'RL 정책의 실제 우위는 검증되지 않음(기존 리포트의 model_v3_prob 채널 결함으로 무효)'으로 명시해야 함.",
-  "blockers": [
-    {
-      "step": "phase3_comprehensive_review_found_critical_bug",
-      "reason": "6개 학습된 RL 정책이 model_v3_prob 스케일링 버그가 있던 상태로 학습됨 — 코드는 수정됐지만 정책을 재학습하지 않는 한 RL 결과 수치는 신뢰할 수 없음. 재학습 여부는 사용자 결정 필요(약 11시간 소요)."
-    }
-  ]
+  "next_action": "Phase 3 결과(phase3_rl_backtest_report_v1.md) 확인 후 Phase 4 착수 여부 사용자 확인 대기",
+  "blockers": []
 }
