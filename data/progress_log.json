@@ -1,6 +1,6 @@
 {
   "phase": "4",
-  "last_completed_step": "phase4_us_shared_step2_review_round13",
+  "last_completed_step": "phase4_us_broker_alpaca_review_round6",
   "steps": [
     {
       "step": "us_data_collection",
@@ -325,8 +325,50 @@
       "status": "done",
       "timestamp": "2026-08-20T04:27:53.608448+00:00",
       "output": "14차 재검토: 수정 내역 없음. observation.py/allocation.py/infer.py 전체를 다시 정독하고 allocation.py의 cash/nav 유한성 미검증 가능성도 검토했으나, 기존 min(equal_share,cap) 캡 구조가 이미 안전하게 흡수함을 확인(BUY는 캡으로, SELL 방향은 position_values 부호에만 의존해 cash/nav와 무관)해 실질적 위험 없음으로 결론. CLAUDE.md 문서 일치, pytest 설정(filterwarnings 없음)도 재확인. 8~13차(6라운드) 재검토 반복 종료 — 총 발견 16건 수정 완료, 이번 라운드로 반복 검토 루프를 마치고 커밋 여부를 사용자에게 확인."
+    },
+    {
+      "step": "phase4_us_broker_alpaca",
+      "status": "done",
+      "timestamp": "2026-08-20T04:35:47.990123+00:00",
+      "output": "src/live/broker/base.py::BrokerAdapter(ABC) 신규 — get_positions()는 observation.py::HeldPosition을 그대로 재사용(당초 plan/10 pseudocode의 dict[str,float] 대신, 2단계에서 확정한 qty+avg_entry_price 형태). mode='paper'(기본)/'live' 생성자 파라미터. src/live/broker/alpaca.py::AlpacaBroker 신규 — Alpaca Trading API v2를 requests로 직접 호출(신규 의존성 없음, DART/EDGAR 모듈과 동일 관례). paper/live는 서로 다른 키 쌍이라 ALPACA_PAPER_*/ALPACA_LIVE_* 로 env var 자체를 분리(잘못된 키-엔드포인트 조합 방지). get_positions()는 qty 문자열 부호가 아니라 side 필드로 롱/숏 부호를 직접 강제(API 버전 불확실성 방어). notional 기반 주문 지원 (소수점 매매라 목표비중->수량 변환 불필요). place_market_order()는 의도적으로 재시도 없음(중복주문 방지, 재시도/멱등성 판단은 호출자 몫으로 문서화). tests/test_live_broker_alpaca.py(14건) + test_live_broker_base.py(2건) 신규, 전부 mock 기반(실제 API 호출 없음, plan/10 §C-3). live 모드 코드 경로는 존재하지만 이번 세션에서 실제 호출 안 함. pytest tests/ -v 240개 전체 통과, leakage-guard 재점검 통과. 아직 review-loop 미적용."
+    },
+    {
+      "step": "phase4_us_broker_alpaca_review_round1",
+      "status": "done",
+      "timestamp": "2026-08-20T04:39:08.309083+00:00",
+      "output": "1차 재검토(review-loop): 실제 버그 3건 발견·수정. (1) get_positions()에서 side 필드가 'long'/'short' 외의 값(누락 포함)이면 조용히 long 취급하던 문제 — 숏을 롱으로 오분류하면 손익 방향이 통째로 반대가 됨, 예상 밖 값이면 즉시 ValueError. (2) 모든 API 호출이 resp.raise_for_status()만 써서 상태 코드만 보이고 Alpaca가 돌려주는 실패 사유(JSON message)가 사라지던 문제 — _raise_for_status_with_body()로 교체해 응답 본문 포함. (3) place_market_order()에 client_order_id 매개변수가 없어 호출자가 나중에 안전한 재시도(멱등성)를 구현할 방법이 없던 문제 — 선택적 매개변수로 추가, base.py ABC 시그니처도 동기화. 회귀 테스트 3건 추가. pytest tests/ -v 243개 전체 통과, leakage-guard 재점검 통과."
+    },
+    {
+      "step": "phase4_us_broker_alpaca_review_round2",
+      "status": "done",
+      "timestamp": "2026-08-20T04:41:32.257338+00:00",
+      "output": "2차 재검토(review-loop): 실제 버그 2건 발견·수정. (1) notional을 그대로 str()로 문자열화해서 allocation.py의 equal_share 나눗셈 결과(부동소수점 정밀도가 그대로 남는 값, 예: 333.33333333333337)가 그대로 브로커에 전송될 수 있던 문제 — round(notional,2)로 센트 단위 반올림. (2) qty/notional이 0 이하/NaN/Inf여도 검증 없이 브로커로 그대로 보내던 문제(극단적으로는 반올림 후 사실상 $0 주문) — place_market_order()에 유한한 양수 검증 추가. 회귀 테스트 5건 추가. pytest tests/ -v 248개 전체 통과, leakage-guard 재점검 통과."
+    },
+    {
+      "step": "phase4_us_broker_alpaca_review_round3",
+      "status": "done",
+      "timestamp": "2026-08-20T04:43:14.795191+00:00",
+      "output": "3차 재검토(review-loop): 직전(2차) 자신의 수정에 남은 구멍 발견·수정. notional=0.004처럼 원본값은 양수라 2차의 value>0 검증(반올림 전 값 기준)을 통과하지만 센트 반올림 후 '0.00'이 돼 사실상 $0 주문이 나가던 문제 — 검증을 반올림 이후 값으로 이동. 부수적으로 OrderResult.submitted_notional이 원본값을 기록해 '기록상 신청 금액'과 '실제 전송 금액'이 어긋나던 것도 반올림된 값을 기록하도록 수정. 회귀 테스트 1건 추가(기존 테스트에 submitted_notional 반올림값 검증도 보강). pytest tests/ -v 249개 전체 통과, leakage-guard 재점검 통과."
+    },
+    {
+      "step": "phase4_us_broker_alpaca_review_round4",
+      "status": "done",
+      "timestamp": "2026-08-20T04:44:52.737769+00:00",
+      "output": "4차 재검토(review-loop): 코드 자체의 새 버그는 못 찾았으나, 테스트 신뢰성 갭 발견·수정 — get_cash/get_nav/is_market_open/get_positions/place_market_order 테스트가 requests.Session.get/post를 URL과 무관하게 같은 payload를 돌려주는 mock으로 검증하면서 URL 자체는 한 번도 확인하지 않아, 엉뚱한 엔드포인트를 호출해도(예: get_cash()가 실수로 /positions을 부르는 경우) 테스트가 그냥 통과했을 상황이었음(실제 소스 코드 자체는 재확인 결과 전부 올바른 엔드포인트를 호출 중이었으나, 이 사실을 테스트가 보장하지 못하고 있었음). 6개 테스트에 실제 호출된 URL이 올바른 엔드포인트로 끝나는지 assert 추가. pytest tests/ -v 249개 전체 통과, leakage-guard 재점검 통과."
+    },
+    {
+      "step": "phase4_us_broker_alpaca_review_round5",
+      "status": "done",
+      "timestamp": "2026-08-20T04:47:00.532601+00:00",
+      "output": "5차 재검토(review-loop): 실제 데이터로 확인해 발견한 구체적 버그 1건 수정. data/checkpoints/rl_ticker_universe.json에 실제로 'BRK-B'(yfinance 대시 표기)가 있는데 Alpaca API는 같은 종목을 'BRK.B'(점 표기)로 주고받는다 — 변환이 전혀 없어서 get_positions()가 'BRK.B' 키를 돌려주면 observation.py의 unknown_tickers 검증에 걸려 매일 에러가 나고, place_market_order()에 'BRK-B'를 그대로 넘기면 Alpaca가 심볼을 못 찾아 주문이 실패했을 것. _to_alpaca_symbol()/_from_alpaca_symbol() 변환 헬퍼 추가(대시<->점, 이 유니버스에서 대시는 오직 주식 클래스 구분에만 쓰임 확인), get_positions()/place_market_order() 양쪽에 적용. OrderResult.ticker는 우리 표준 표기 유지. 회귀 테스트 2건 추가. pytest tests/ -v 251개 전체 통과, leakage-guard 재점검 통과."
+    },
+    {
+      "step": "phase4_us_broker_alpaca_review_round6",
+      "status": "done",
+      "timestamp": "2026-08-20T04:48:05.624050+00:00",
+      "output": "6차 재검토(review-loop): 수정 내역 없음. 심볼 변환 역/정방향 대칭성, 다른 특수문자 티커 존재 여부(재확인, BRK-B 외 없음), 세션 리소스 관리, client_order_id 포맷 검증, filled_qty/filled_avg_price 파싱의 문자열/숫자 타입 불확실성(재확인, 낮은 확신도로 보류 유지) 등을 점검했으나 실제 트리거 시나리오가 있는 새 문제는 발견 못 함. review-loop 반복 종료 — 1~6차(6라운드) 누적 발견 11건 수정. pytest tests/ -v 251개 전체 통과, leakage-guard 통과 상태로 커밋 대기."
     }
   ],
-  "next_action": "Phase 4 US 트랙 3단계: src/live/broker/base.py(ABC) + src/live/broker/alpaca.py(paper-api.alpaca.markets, mode=paper/live 생성자 파라미터로 도메인/키 분기) 구현, mock 기반 유닛테스트 — 사용자 승인 대기",
+  "next_action": "Phase 4 US 트랙 3단계 review-loop 재검토 대기 -> 통과 후 커밋 -> 4단계(safety.py + decide_us.py + execute_us.py + cron)로 진행",
   "blockers": []
 }

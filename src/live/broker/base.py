@@ -1,0 +1,89 @@
+"""Phase 4 공유 — 브로커 실행 어댑터 공통 인터페이스.
+
+plan/10 §B-4/§C-2. "모드"는 클래스 분기가 아니라 생성자 파라미터
+(`mode: Literal["paper","live"]`)로 base URL/키 쌍만 바뀌는 구조다 —
+의사결정 로직(observation → infer → allocation)은 모의/실전 공용이고,
+이 어댑터가 실제로 "브로커에 주문을 보낸다" 단계만 모드로 분기한다.
+
+`get_positions()`는 `src/live/observation.py::HeldPosition`을 반환한다.
+plan/10 §B-4의 원래 pseudocode는 `dict[str, float]`(수량만)이었지만,
+observation.py 구현 중(Phase 4 2단계) `unrealized_return` 계산에 평단가
+(`avg_entry_price`)가 반드시 필요함을 발견해 확장했다 — 수량만으로는
+"보유 중"인지는 알아도 "얼마에 샀는지"를 몰라 평가손익을 계산할 방법이
+없었다. 새 브로커 어댑터를 추가할 때도 이 확장된 형태를 그대로 따를 것.
+"""
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import Literal
+
+from src.live.observation import HeldPosition
+
+
+@dataclass
+class OrderResult:
+    """`place_market_order()`의 반환값. `raw`에 브로커 원본 응답을 그대로
+    보존해 감사/디버깅에 쓴다(일일 리포트 — plan/10 §B-7)."""
+
+    ticker: str
+    side: Literal["buy", "sell"]
+    status: str  # 브로커가 보고한 주문 상태 그대로(예: "accepted", "filled", "rejected")
+    order_id: str | None = None
+    submitted_qty: float | None = None
+    submitted_notional: float | None = None
+    filled_qty: float | None = None
+    filled_avg_price: float | None = None
+    raw: dict | None = None
+
+
+class BrokerAdapter(ABC):
+    """`mode="paper"`(기본)/`"live"` — 생성자에서 도메인/키만 분기한다(§B-4).
+
+    **기본값은 절대 `live`가 아니어야 한다**(Phase 4 핵심 결정 1번,
+    CLAUDE.md "Phase 4 구체 사양"). `live` 경로를 실제로 호출하는 코드는
+    존재해야 하지만, 이번 구현 범위에서 실제로 실행하지는 않는다(별도
+    승인 후).
+    """
+
+    def __init__(self, mode: Literal["paper", "live"] = "paper"):
+        self.mode = mode
+
+    @abstractmethod
+    def get_positions(self) -> dict[str, HeldPosition]:
+        """ticker -> HeldPosition(qty, avg_entry_price). `qty<0`은 숏
+        포지션이다("롱 베이스, 숏은 전략적 허용" 결정, observation.py 모듈
+        docstring 참고)."""
+
+    @abstractmethod
+    def get_cash(self) -> float: ...
+
+    @abstractmethod
+    def get_nav(self) -> float:
+        """브로커가 직접 보고하는 계좌 순자산. observation.py는 학습 시점과
+        동일한 가격 소스(우리 자체 OHLCV 파이프라인의 종가)로 NAV를 스스로
+        재계산해서 쓰고 이 값을 그대로 쓰지 않는다 — 이 값은 대신 safety.py의
+        재구성(reconciliation) 체크에서 "우리가 재계산한 NAV vs 브로커가
+        실제로 보고하는 NAV" 괴리를 감지하는 용도로 쓰인다."""
+
+    @abstractmethod
+    def place_market_order(
+        self,
+        ticker: str,
+        side: Literal["buy", "sell"],
+        qty: float | None = None,
+        notional: float | None = None,
+        client_order_id: str | None = None,
+    ) -> OrderResult:
+        """시장가 주문을 제출한다. `qty`/`notional` 중 정확히 하나만 지정한다
+        (대부분의 현대 브로커 API가 이 방식을 지원 — `notional`은 목표
+        금액, `qty`는 목표 수량). 재시도는 이 계층의 책임이 아니다 — 주문
+        제출을 맹목적으로 재시도하면 응답 유실 시 중복 주문이 나갈 수 있어,
+        재시도/멱등성 판단은 호출자(execute_*.py, safety.py)의 몫으로
+        남겨둔다. `client_order_id`는 그 재시도를 안전하게 만들기 위한
+        고리다 — 호출자가 매 주문에 고유값을 지정해두면, 브로커가 지원하는
+        경우 같은 값으로 재제출 시 중복 주문 대신 기존 주문으로 처리된다
+        (구현체가 지원하지 않으면 무시해도 됨)."""
+
+    @abstractmethod
+    def is_market_open(self) -> bool: ...
