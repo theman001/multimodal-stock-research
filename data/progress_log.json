@@ -1,6 +1,6 @@
 {
   "phase": "4",
-  "last_completed_step": "phase4_us_broker_alpaca_review_round6",
+  "last_completed_step": "phase4_us_step4_review_round3",
   "steps": [
     {
       "step": "us_data_collection",
@@ -367,8 +367,52 @@
       "status": "done",
       "timestamp": "2026-08-20T04:48:05.624050+00:00",
       "output": "6차 재검토(review-loop): 수정 내역 없음. 심볼 변환 역/정방향 대칭성, 다른 특수문자 티커 존재 여부(재확인, BRK-B 외 없음), 세션 리소스 관리, client_order_id 포맷 검증, filled_qty/filled_avg_price 파싱의 문자열/숫자 타입 불확실성(재확인, 낮은 확신도로 보류 유지) 등을 점검했으나 실제 트리거 시나리오가 있는 새 문제는 발견 못 함. review-loop 반복 종료 — 1~6차(6라운드) 누적 발견 11건 수정. pytest tests/ -v 251개 전체 통과, leakage-guard 통과 상태로 커밋 대기."
+    },
+    {
+      "step": "phase4_us_daily_pipeline",
+      "status": "done",
+      "timestamp": "2026-08-20T05:08:23.244445+00:00",
+      "output": "4단계 구현 중 구조적 버그 2건 발견해 먼저 해결: (1) build_features()(Phase 1)가 target(내일 종가) non-null 행만 남겨서, '오늘'(가장 최근 거래일)은 정의상 항상 내일 종가가 없어 features.parquet에 구조적으로 절대 못 들어감 — daily_pipeline을 매일 돌려도 오늘자 행이 영원히 안 생기는 문제였음(observation.py는 2단계에서 이게 이미 있다고 전제하고 만들어졌었음). target을 억지로 채워 파일에 쓰면 dtype이 오염됨을 실측 확인(int64->object->float64)해 기각하고, 대신 features.parquet은 절대 건드리지 않고 라이브 경로에서만 compute_features()/이벤트 피처 계산을 재사용해 오늘자 행을 메모리상으로 계산해 붙이는 방식으로 해결. (2) ohlcv_meta_us/kr.parquet을 합쳐 통합 ohlcv_meta.parquet을 만드는 재사용 가능한 함수가 아예 없었음(Phase 1 때 1회성 수작업) — merge_ohlcv_meta() 신규 작성. src/live/daily_pipeline.py 신규(merge_ohlcv_meta, build_live_features_window). observation.py에 features_df_override 파라미터 추가(기존 로직 무변경, 최소 훅만). 테스트 7건 신규(배치 경로 compute_features()와 수치 일치 대조 포함), 기존 20개 그대로 통과. pytest tests/ -v 258개 전체 통과, leakage-guard(rolling 로직은 전부 기존 검증된 함수 재사용, 신규 rolling 없음) 통과."
+    },
+    {
+      "step": "phase4_us_safety_decide_execute",
+      "status": "done",
+      "timestamp": "2026-08-20T05:34:58.253233+00:00",
+      "output": "src/live/safety.py 신규(공유) — LiveState(+state.json 원자적 저장/로드/부트스트랩), acquire_run_lock(중복실행 방지, stale lock 회수), check_reconciliation(포지션/현금 재구성), check_daily_loss_kill_switch(전일 대비 NAV 급락 시 BUY 억제), enforce_order_caps(정책 캡 재확인 + 하드 상한 10%). src/live/decide_us.py 신규 — run_decide(): 브로커 조회->재구성 체크->증분 수집(collect_us/merge_ohlcv_meta/collect_events_us/score_events_us)->build_live_features_window->build_today_observation->predict_action->compute_target_allocations->킬스위치/캡 적용->decisions/us_{date}.json 저장(market_id 포함, 주문은 안 냄). src/live/execute_us.py 신규 — run_execute(mode='paper' 기본, 'live'는 명시적으로 거부): is_market_open() 확인(DST를 하드코딩 안 하기 위해 넓은 폴링 윈도우 전제)->재구성 재확인->US market_id 필터링->캡 재검증->SELL은 브로커 현재 qty로 전량청산/BUY는 notional로 제출->state.json 갱신. 구현 중 실제 버그 발견: 넓은 폴링 윈도우에서 같은 날 여러 번 실행되면 state.updated_at을 '오늘 이미 체결함'의 근거로 쓰면 그날 최초 실행(부트스트랩 직후)까지 건너뛰게 되는 버그 — last_executed_date라는 전용 필드로 분리해 수정. cron은 src/live/cron_us.txt에 준비만 해두고 실제 시스템 crontab에는 설치하지 않음(무인 자동 실행 시작은 명시적 승인 필요 사안으로 판단, Alpaca 키도 아직 미설정). 테스트 46건 신규(safety 25 + decide_us 6 + execute_us 13, 전부 mock/가짜 브로커, 실제 API 호출 없음). pytest tests/ -v 302개 전체 통과, leakage-guard 통과. 아직 review-loop 미적용, 커밋 전."
+    },
+    {
+      "step": "phase4_us_step4_review_round1",
+      "status": "done",
+      "timestamp": "2026-08-20T06:19:19.617391+00:00",
+      "output": "1차 재검토(review-loop): 문서/코드 불일치 2건 발견·수정. (1) execute_us.py 모듈 docstring이 멱등성 체크를 여전히 'state.updated_at 기준'이라고 설명하고 있었음(실제 코드는 last_executed_date로 이미 수정됐는데 상단 docstring만 갱신이 안 됨) — 정정. (2) broker/base.py의 get_nav() docstring이 'reconciliation 전용, 실제 거래 계산엔 안 씀'이라고 서술했는데, 실제로는 execute_us.py가 enforce_order_caps()의 NAV 소스로도 이 값을 쓰고 있어 문서와 실제 사용이 어긋나 있었음 — 코드(execute_us.py의 선택)가 합리적이라고 판단해 코드는 그대로 두고 문서를 실제 이중 용도에 맞게 정정. pytest tests/ -v 302개 그대로 통과(문서만 수정, 로직 변경 없음), leakage-guard 통과. daily_pipeline.py가 features.parquet에 to_parquet를 전혀 호출하지 않음을 grep으로 재확인."
+    },
+    {
+      "step": "phase4_us_step4_review_round2",
+      "status": "done",
+      "timestamp": "2026-08-20T06:25:26.372634+00:00",
+      "output": "2차 재검토(review-loop): 실제 보안 우회 경로 1건 발견·수정 — execute_us.py의 mode!='paper' 가드가 mode 문자열 인자만 검사하고, broker= 오버라이드로 실제로는 live 모드인 브로커 인스턴스를 주입하면서 mode='paper'만 넘기면(예: run_execute(mode='paper', broker=AlpacaBroker(mode='live'))) 이 가드를 그대로 우회해 실거래 브로커가 호출될 수 있었음 — 'live 경로를 이번 세션에서 절대 실행하지 않는다'는 핵심 결정을 코드가 아니라 호출 관례에만 의존하게 만드는 구멍이었음. broker.mode 자체도 별도로 검증하도록 수정. 회귀 테스트 1건 추가. pytest tests/ -v 303개 전체 통과, leakage-guard 재점검 통과."
+    },
+    {
+      "step": "phase4_us_step4_review_round3",
+      "status": "done",
+      "timestamp": "2026-08-20T06:29:24.480826+00:00",
+      "output": "3차 재검토(review-loop): 문서/타입힌트 정확성 2건 수정(기능 버그는 아님). (1) decide_us.py의 broker 파라미터 타입힌트가 AlpacaBroker였는데 실제로는 BrokerAdapter 어떤 구현체든(테스트의 _FakeBroker 포함) 받는다 — 정정. 동시에 decide_us.py는 place_market_order를 아예 호출하지 않으므로(grep으로 재확인) execute_us.py의 broker.mode 우회 문제가 여기엔 해당 없음을 확인하고 docstring에 명시. (2) 직전(1차) 라운드에서 고친 get_nav() docstring이 '용도가 두 가지'라고 썼는데, decide_us.py를 다시 보니 load_or_bootstrap_state()의 nav_anchor seed 값으로도 쓰이는 세 번째 용도가 있었음 — 추가하고, state.json 유실 후 기존 포지션이 있는 채로 재부트스트랩되면 이 값과 재계산값이 어긋날 수 있는 알려진 한계도 명시. pytest tests/ -v 303개 그대로 통과, leakage-guard 재점검 통과."
+    },
+    {
+      "step": "phase4_us_step4_review_round4",
+      "status": "done",
+      "timestamp": "2026-08-20T06:37:48.842775+00:00",
+      "output": "4차 재검토(review-loop): safety.py의 세 안전장치(check_reconciliation/check_daily_loss_kill_switch/enforce_order_caps)가 전부 같은 취약점 클래스를 공유함을 발견 — NaN 입력이 들어오면 내부의 >/>= 비교가 항상 False로 평가돼(파이썬에서 NaN 비교는 전부 False) 안전장치 자체가 아무 경고 없이 조용히 무력화됨. 3건 모두 수정: (1) check_reconciliation은 current_cash 또는 임의 포지션 qty가 non-finite면 RuntimeError. (2) check_daily_loss_kill_switch는 current_nav가 non-finite면 True(킬스위치 발동, fail-closed) 반환. (3) enforce_order_caps는 nav가 non-finite면 BUY 주문을 전부 제외하고 SELL만 통과(부분 캡 계산 없이 안전한 쪽으로). 회귀 테스트 5건 추가(비유한 current_cash, 비유한 qty, 비유한 current_nav 2종(nan/inf), 비유한 nav). pytest tests/ -v 307개 전체 통과, leakage-guard grep(rolling(/center=True/shift(-/.fit() src/live/ 전부 결과 없음) 통과."
+    },
+    {
+      "step": "phase4_us_step4_review_round5",
+      "status": "done",
+      "timestamp": "2026-08-20T06:47:42.428274+00:00",
+      "output": "5차 재검토(review-loop): daily_pipeline.py의 실제 수치 불일치 버그 1건 발견·수정 — _compute_live_rows()가 이벤트 피처(event_count_5d/event_sentiment_mean5d)를 계산할 때 row_dates로 target_date 단 하루짜리 배열만 넘기고 있었음. _compute_features_for_ticker()의 '5거래일' 윈도우는 달력일이 아니라 row_dates 배열 안에서 idx-4번째 원소(그 종목의 최근 5개 거래일 row)로 정의되는데(배치 경로 build_event_features()는 그 종목의 전체 날짜 grid를 넘겨 정상 동작), row_dates가 1개짜리면 idx-4가 0으로 clamp되어 window_start==target_date 자기 자신이 되어버려 최근 1~4거래일 사이에 발생한 이벤트가 event_count_5d/event_sentiment_mean5d에서 통째로 빠짐 — 실측으로 재현 확인(batch event_count_5d=1 vs live=0, 같은 입력). Phase4 DoD 1번 'observation.py가 배치 경로와 수치 일치'를 이벤트 피처 채널에서 위반하는 실제 버그. 수정: 티커별로 실제 최근 거래일(target_date까지, ohlcv_meta에서 조회)을 row_dates로 넘기도록 변경해 배치와 동일한 윈도우 정의를 재현. 회귀 테스트 1건 추가(target_date 2거래일 전 이벤트가 event_count_5d/event_sentiment_mean5d에 반영되는지 검증 — 수정 전 코드로는 실패함을 확인). pytest tests/ -v 308개 전체 통과, leakage-guard grep(rolling(/center=True/shift(-/.fit() src/live/ 전부 결과 없음) 통과."
     }
   ],
-  "next_action": "Phase 4 US 트랙 3단계 review-loop 재검토 대기 -> 통과 후 커밋 -> 4단계(safety.py + decide_us.py + execute_us.py + cron)로 진행",
-  "blockers": []
+  "next_action": "Phase 4 US 트랙 4단계 review-loop 6차 재검토 진행 -> 수정 내역 없을 때까지 반복 -> 통과 후 커밋 -> cron 실제 설치 여부/Alpaca 키 설정은 별도 사용자 확인 -> 5단계(notify.py) 진행",
+  "blockers": [
+    "Alpaca 모의투자 API 키(.env)가 아직 미설정 — 실제 cron 가동 전 사용자가 발급/설정 필요"
+  ]
 }

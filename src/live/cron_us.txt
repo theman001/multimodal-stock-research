@@ -1,0 +1,33 @@
+# Phase 4 US 트랙 — cron 등록 예시(plan/10 §B-6 근거).
+#
+# 이 파일은 참고용 crontab 스니펫이다 — 시스템 crontab에 아직 설치되지
+# 않았다(설치는 "이 시스템이 무인으로 실제 API를 호출하기 시작한다"는
+# 상태 전환이라 명시적 승인 없이 자동으로 하지 않음). 설치하려면:
+#   crontab -e
+# 로 열어 아래 두 줄을 붙여넣거나, 이 파일 자체를 합치려면:
+#   (crontab -l 2>/dev/null; cat src/live/cron_us.txt | grep -v '^#') | crontab -
+#
+# 사전 준비물(설치 전에 반드시 확인):
+#   - .env에 ALPACA_PAPER_API_KEY_ID/ALPACA_PAPER_SECRET_KEY 설정(Alpaca
+#     모의투자 계좌 발급 필요 — plan/10 §D "사용자 책임 영역")
+#   - REPO_PATH를 이 저장소의 실제 절대경로로 바꿀 것
+#   - .venv가 REPO_PATH/.venv에 있다고 가정(다르면 python 경로 수정)
+#   - ${DATA_ROOT}/live/logs/ 디렉터리는 자동 생성됨(각 스크립트가 mkdir)
+#
+# 시각 근거(plan/10 §B-6): KR장 15:30 KST 마감, US장 05:00~06:00 KST(DST)
+# 마감 — decide는 그 둘이 다 확정된 07:00 KST에 실행. execute는 US 장
+# 개장(22:30~23:30 KST, DST별로 다름)을 정확한 두 개의 cron 줄로 손수
+# 관리하는 대신, execute_us.py 자체가 AlpacaBroker.is_market_open()으로
+# 실행 시점에 직접 확인하도록 만들어져 있다 — 그래서 아래처럼 조금 넓은
+# 창(22:00~23:50 KST, 10분마다)으로 걸어도 안전하다(장이 안 열렸으면
+# 조용히 종료, 이미 그날 체결이 끝났으면 last_executed_date로 멱등적으로
+# 건너뜀 — DST 전환 때마다 수동으로 cron을 고칠 필요가 없어짐).
+
+REPO_PATH=/home/taeuk/projects/multimodal-stock-research
+
+# decide: 매일 07:00 KST — 결정만 저장, 브로커 주문 없음
+0 7 * * * cd REPO_PATH && .venv/bin/python -m src.live.decide_us >> data/live/logs/decide_us.log 2>&1
+
+# execute: 22:00~23:50 KST, 10분마다 — is_market_open()이 False면 즉시 종료,
+# last_executed_date로 같은 날 중복 체결 방지
+*/10 22,23 * * * cd REPO_PATH && .venv/bin/python -m src.live.execute_us >> data/live/logs/execute_us.log 2>&1

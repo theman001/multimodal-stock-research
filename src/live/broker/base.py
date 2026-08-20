@@ -60,11 +60,22 @@ class BrokerAdapter(ABC):
 
     @abstractmethod
     def get_nav(self) -> float:
-        """브로커가 직접 보고하는 계좌 순자산. observation.py는 학습 시점과
-        동일한 가격 소스(우리 자체 OHLCV 파이프라인의 종가)로 NAV를 스스로
-        재계산해서 쓰고 이 값을 그대로 쓰지 않는다 — 이 값은 대신 safety.py의
-        재구성(reconciliation) 체크에서 "우리가 재계산한 NAV vs 브로커가
-        실제로 보고하는 NAV" 괴리를 감지하는 용도로 쓰인다."""
+        """브로커가 직접 보고하는 계좌 순자산. 용도가 세 가지다.
+        (1) safety.py의 재구성(reconciliation) 체크에서 "우리가 재계산한
+        NAV vs 브로커가 실제로 보고하는 NAV" 괴리를 감지하는 용도 —
+        observation.py는 학습 시점과 동일한 가격 소스(우리 자체 OHLCV
+        파이프라인의 종가)로 NAV를 스스로 재계산해서 쓰고 이 값을 그대로
+        쓰지 않는다. (2) execute_us.py가 주문 캡(`enforce_order_caps`)을
+        계산할 때의 NAV로도 이 값을 쓴다 — 그 시점엔 observation.py의
+        재계산 파이프라인이 이미 다 끝난 뒤(아침 decide 시점)라 새로 돌릴
+        게 아니라면 손쉽게 구할 수 있는 유일한 NAV이고, 체결 직전 브로커의
+        실시간 값을 쓰는 게 아침에 계산해둔 스냅샷보다 오히려 더 정확하다.
+        (3) `safety.py::load_or_bootstrap_state()`가 최초 배포 시점 `nav_anchor`를
+        seed할 때도 이 값을 쓴다 — 그 시점엔 observation.py가 아직 한 번도
+        돈 적이 없어 재계산할 방법 자체가 없다(정상적인 최초 배포는 보유
+        포지션 없이 현금뿐이라 이 값과 재계산값이 사실상 같지만, state.json이
+        중간에 유실돼 기존 포지션이 있는 채로 재부트스트랩되면 두 값이
+        약간 어긋날 수 있다는 점은 알려진 한계로 남겨둔다)."""
 
     @abstractmethod
     def place_market_order(

@@ -85,12 +85,20 @@ def build_today_observation(
     nav_anchor: float,
     include_event_features: bool,
     lookback_days: int = DEFAULT_LOOKBACK_DAYS,
+    features_df_override: pd.DataFrame | None = None,
 ) -> TodayObservation:
     """target_date 하루치 관측벡터를 만든다. 그날 features.parquet/ohlcv_meta.parquet
-    행이 갱신돼 있어야 한다(daily_pipeline.py가 그 전에 실행돼야 함, 다음 단계).
+    행이 갱신돼 있어야 한다(daily_pipeline.py가 그 전에 실행돼야 함).
 
     nav_anchor: 배포 시점(또는 마지막으로 리베이스한 시점) 기준 NAV. nav_ratio
     계산의 잠정 앵커로만 쓰인다(모듈 docstring 참고).
+
+    features_df_override: 주어지면 `features.parquet`을 디스크에서 읽는 대신
+    이 데이터프레임을 그대로 쓴다. `build_features()`(Phase 1)는 target(내일
+    종가) non-null 행만 남기므로 target_date가 가장 최근 거래일이면(라이브에선
+    항상 그럼) 구조적으로 features.parquet에 절대 들어가지 못한다 — 그 공백을
+    `daily_pipeline.py::build_live_features_window()`가 오늘자 행을 즉석
+    계산해 메운 결과를 여기 넣어주면 된다(Phase 4 4단계 구현 중 발견한 문제).
     """
     if lookback_days <= 0:
         # lookback_days>0이 이 함수 전체 설계의 전제다(모듈 docstring 1문단) —
@@ -141,7 +149,10 @@ def build_today_observation(
     target_date = target_date.normalize()
     window_start = target_date - pd.Timedelta(days=lookback_days)
 
-    features_df = pd.read_parquet(data_root / "processed" / "features.parquet")
+    if features_df_override is not None:
+        features_df = features_df_override
+    else:
+        features_df = pd.read_parquet(data_root / "processed" / "features.parquet")
     window_df = features_df[
         (features_df["date"] >= window_start) & (features_df["date"] <= target_date)
     ].copy()
