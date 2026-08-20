@@ -42,6 +42,7 @@ _BALANCE_PAYLOAD = {
 _ORDER_PAYLOAD = {"rt_cd": "0", "msg1": "정상처리 되었습니다.", "output": {"ODNO": "order-1", "ORD_TMD": "090001"}}
 _HOLIDAY_TRADING_DAY_PAYLOAD = {"rt_cd": "0", "msg1": "정상", "output": [{"bass_dt": "20260820", "opnd_yn": "Y"}]}
 _HOLIDAY_CLOSED_DAY_PAYLOAD = {"rt_cd": "0", "msg1": "정상", "output": [{"bass_dt": "20260815", "opnd_yn": "N"}]}
+_PRICE_PAYLOAD = {"rt_cd": "0", "msg1": "정상", "output": {"stck_prpr": "71000"}}
 
 
 def _post_dispatcher(order_payload=None, hashkey_payload=None, token_payload=None):
@@ -61,15 +62,18 @@ def _post_dispatcher(order_payload=None, hashkey_payload=None, token_payload=Non
     return _dispatch
 
 
-def _get_dispatcher(balance_payload=None, holiday_payload=None):
+def _get_dispatcher(balance_payload=None, holiday_payload=None, price_payload=None):
     balance_payload = balance_payload or _BALANCE_PAYLOAD
     holiday_payload = holiday_payload or _HOLIDAY_TRADING_DAY_PAYLOAD
+    price_payload = price_payload or _PRICE_PAYLOAD
 
     def _dispatch(url, *args, **kwargs):
         if url.endswith("/uapi/domestic-stock/v1/trading/inquire-balance"):
             return _FakeResponse(balance_payload)
         if url.endswith("/uapi/domestic-stock/v1/quotations/chk-holiday"):
             return _FakeResponse(holiday_payload)
+        if url.endswith("/uapi/domestic-stock/v1/quotations/inquire-price"):
+            return _FakeResponse(price_payload)
         raise AssertionError(f"예상치 못한 GET 호출: {url}")
 
     return _dispatch
@@ -134,6 +138,47 @@ def test_get_positions_parses_and_filters_zero_qty(kis_env, monkeypatch):
     positions = broker.get_positions()
     assert positions == {"005930": HeldPosition(qty=10.0, avg_entry_price=70000.0)}
     assert "000660" not in positions  # hldg_qty=0인 과거 보유 종목은 제외
+
+
+def test_get_current_price_parses_stck_prpr(kis_env, monkeypatch):
+    mock_get = MagicMock(side_effect=_get_dispatcher())
+    monkeypatch.setattr(requests.Session, "post", MagicMock(side_effect=_post_dispatcher()))
+    monkeypatch.setattr(requests.Session, "get", mock_get)
+    broker = KISBroker(mode="paper")
+
+    price = broker.get_current_price("005930")
+
+    assert price == pytest.approx(71000.0)
+    price_call = next(c for c in mock_get.call_args_list if c.args[0].endswith("/inquire-price"))
+    assert price_call.kwargs["params"]["FID_INPUT_ISCD"] == "005930"
+
+
+def test_get_current_price_raises_clear_error_when_output_missing_field(kis_env, monkeypatch):
+    """거래정지/상장폐지 종목 등에서 rt_cd='0'이지만 output에 stck_prpr이 없는
+    응답이 오면, 원인 불명의 KeyError가 아니라 명확한 도메인 에러로 실패해야
+    한다(review-loop 1차 재검토로 발견 — 같은 파일의 다른 메서드는 이미
+    data.get('output', {})로 방어하는데 이 메서드만 직접 인덱싱하고 있었음)."""
+    empty_output_payload = {"rt_cd": "0", "msg1": "정상", "output": {}}
+    monkeypatch.setattr(requests.Session, "post", MagicMock(side_effect=_post_dispatcher()))
+    monkeypatch.setattr(
+        requests.Session, "get", MagicMock(side_effect=_get_dispatcher(price_payload=empty_output_payload))
+    )
+    broker = KISBroker(mode="paper")
+    with pytest.raises(RuntimeError, match="stck_prpr이 없음"):
+        broker.get_current_price("005930")
+
+
+@pytest.mark.parametrize("bad_price", ["0", "-100", "nan"])
+def test_get_current_price_rejects_non_positive_or_non_finite_price(kis_env, monkeypatch, bad_price):
+    """execute_kr.py가 notional // price로 정수 수량을 계산하는 분모로 바로
+    쓰는 값이다 — 0/음수/NaN이 여기서 안 걸리면 ZeroDivisionError나 터무니없는
+    qty로 이어진다."""
+    bad_payload = {"rt_cd": "0", "msg1": "정상", "output": {"stck_prpr": bad_price}}
+    monkeypatch.setattr(requests.Session, "post", MagicMock(side_effect=_post_dispatcher()))
+    monkeypatch.setattr(requests.Session, "get", MagicMock(side_effect=_get_dispatcher(price_payload=bad_payload)))
+    broker = KISBroker(mode="paper")
+    with pytest.raises(RuntimeError, match="비정상적임"):
+        broker.get_current_price("005930")
 
 
 def test_access_token_is_cached_across_calls(kis_env, monkeypatch):

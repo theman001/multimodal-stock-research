@@ -29,10 +29,15 @@ Alpaca와의 구조적 차이 (plan/10 §B-4):
   CLAUDE.md "Phase 4 구체 사양" 3번, plan/10 §B-4. `allocation.py`(공유
   모듈)가 만드는 `TargetOrder`는 Alpaca(소수점 매매 지원)를 기준으로
   notional을 담는데, 이 어댑터는 notional을 받으면 조용히 변환하지 않고
-  즉시 `NotImplementedError`를 던진다 — notional을 실제 체결가로 나눠
-  정수 수량으로 바꾸는 로직(가격 조회를 동반)은 이 브로커 계층이 암묵적으로
-  떠맡을 일이 아니라, execute_kr.py(Phase 4 KR 4단계)가 명시적으로 설계할
-  결정이기 때문이다.
+  즉시 `NotImplementedError`를 던진다. notional -> 정수 수량 변환은
+  `get_current_price()`(2026-08-20 사용자 결정 — `execute_kr.py`가 체결
+  직전 KIS 현재가를 실시간 조회해서 씀, `observation.py`의 관측 시점 종가를
+  재사용하지 않음)로 이 어댑터가 기준가 조회 자체는 제공하되, `notional //
+  price` 나눗셈과 그 결과를 실제로 주문에 쓰는 결정은 여전히
+  `execute_kr.py`(Phase 4 KR 4단계)의 몫이다 — `place_market_order()`는
+  이미 계산된 정수 `qty`만 받는다. `get_current_price()`는 Alpaca 쪽엔
+  대응 개념이 아예 없어서 공유 `BrokerAdapter` ABC가 아니라 `KISBroker`
+  전용 메서드로 뒀다.
 - **KIS는 HTTP 200이어도 비즈니스 로직 실패를 응답 본문의 `rt_cd`로
   알린다**(Alpaca는 HTTP 상태코드로 실패를 표현) — HTTP 레벨 에러 체크만
   하면 이 실패를 놓친다.
@@ -68,6 +73,7 @@ _BALANCE_PATH = "/uapi/domestic-stock/v1/trading/inquire-balance"
 _ORDER_PATH = "/uapi/domestic-stock/v1/trading/order-cash"
 _HASHKEY_PATH = "/uapi/hashkey"
 _HOLIDAY_PATH = "/uapi/domestic-stock/v1/quotations/chk-holiday"
+_PRICE_PATH = "/uapi/domestic-stock/v1/quotations/inquire-price"
 _TOKEN_PATH = "/oauth2/tokenP"
 
 # TR_ID는 모의/실전이 접두사(V)로만 구분되는 게 KIS의 일반 관례다 — 재확인 필요(모듈 docstring 참고).
@@ -75,6 +81,7 @@ _TR_ID_BALANCE = {"paper": "VTTC8434R", "live": "TTTC8434R"}
 _TR_ID_BUY = {"paper": "VTTC0802U", "live": "TTTC0802U"}
 _TR_ID_SELL = {"paper": "VTTC0801U", "live": "TTTC0801U"}
 _TR_ID_HOLIDAY = "CTCA0903R"  # 조회성 TR이라 모의/실전 공통으로 추정 — 재확인 필요
+_TR_ID_CURRENT_PRICE = "FHKST01010100"  # 조회성 TR이라 모의/실전 공통으로 추정 — 재확인 필요
 
 _ORDER_DVSN_MARKET = "01"  # 시장가
 
@@ -208,6 +215,42 @@ class KISBroker(BrokerAdapter):
         data = resp.json()
         _check_rt_cd(data)
         return data
+
+    def get_current_price(self, ticker: str) -> float:
+        """`BrokerAdapter` ABC에는 없는 KIS 전용 메서드다 — Alpaca는 notional
+        (금액) 기반 주문을 직접 지원해 "몇 주를 살지" 계산이 브로커 내부에서
+        끝나지만, KIS는 정수 수량만 받으므로(모듈 docstring "정수 주식 수량만
+        허용" 참고) `execute_kr.py`가 `allocation.py`의 notional을 정수 수량으로
+        바꿀 기준가가 필요하다. 이 변환은 공유 `BrokerAdapter` 인터페이스의
+        책임이 아니라(Alpaca 쪽엔 아예 무의미한 개념) `execute_kr.py`가
+        `KISBroker`인 걸 알고 직접 호출하는 KR 트랙 전용 경로다(2026-08-20
+        사용자 결정 — 실시간 조회, 관측 시점의 종가 재사용 아님). 체결 직전
+        시세이므로 결정(07:00 KST) 시점과 실제 체결(09:00 KST) 시점 사이 갭을
+        학습 시뮬레이션보다 더 최신 가격으로 좁혀준다(plan/10 §D "오버나이트
+        갭" 항목과 관련)."""
+        resp = self._session.get(
+            self._url(_PRICE_PATH),
+            params={"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ticker},
+            headers=self._auth_headers(_TR_ID_CURRENT_PRICE),
+            timeout=self.timeout,
+        )
+        _raise_for_status_with_body(resp)
+        data = resp.json()
+        _check_rt_cd(data)
+        # data["output"]으로 직접 인덱싱하지 않는다 — 이 파일의 다른 메서드
+        # (place_market_order/is_market_open)와 동일하게 .get()으로 방어한다.
+        # 거래정지/상장폐지 종목처럼 rt_cd="0"이면서도 output이 비거나 필드가
+        # 빠진 응답이 올 가능성을 배제할 수 없다(재확인 필요) — 그런 경우
+        # 원인 불명의 KeyError 대신 명확한 도메인 에러로 실패해야 한다.
+        stck_prpr = data.get("output", {}).get("stck_prpr")
+        if stck_prpr is None:
+            raise RuntimeError(f"{ticker}의 현재가 조회 응답에 stck_prpr이 없음(거래정지/상장폐지 의심): {data!r}")
+        price = float(stck_prpr)
+        if not (np.isfinite(price) and price > 0):
+            # notional // price로 바로 나눗셈에 쓰일 값이다 — 0/NaN/Inf가
+            # 여기서 안 걸리면 ZeroDivisionError나 터무니없는 qty로 이어진다.
+            raise RuntimeError(f"{ticker}의 현재가 조회 결과가 비정상적임(유한한 양수 아님): {price!r}")
+        return price
 
     def get_positions(self) -> dict[str, HeldPosition]:
         data = self._inquire_balance()

@@ -1,6 +1,6 @@
 {
   "phase": "4",
-  "last_completed_step": "phase4_kr_step3_review_round2",
+  "last_completed_step": "phase4_kr_step3b_get_current_price",
   "steps": [
     {
       "step": "us_data_collection",
@@ -475,6 +475,12 @@
       "status": "done",
       "timestamp": "2026-08-20T08:40:58.443764+00:00",
       "output": "review-loop(kis.py) 2차: avg_entry_price=0(무상증자 등으로 취득가가 0으로 잡히는 경우)/음수 hldg_qty(원칙상 불가능해야 하나 KIS가 어겼을 경우) 두 시나리오를 get_positions() 관점에서 재점검 — 둘 다 observation.py가 이미 방어(avg_entry_price<=0이면 unrealized_return을 0으로 가드, qty<0은 애초에 숏 포지션으로 정의된 정상 입력이라 에러 아님)하고 있음을 확인, kis.py 자체 수정 불필요. 수정 내역 없음."
+    },
+    {
+      "step": "phase4_kr_step3b_get_current_price",
+      "status": "done",
+      "timestamp": "2026-08-20T08:48:39.639618+00:00",
+      "output": "Phase 4 KR 3단계 추가: 사용자 결정(execute_kr.py가 KIS 현재가 조회로 notional-> 정수 qty 변환)에 따라 kis.py::get_current_price() 신규 추가(FHKST01010100, /uapi/domestic-stock/v1/quotations/inquire-price) — BrokerAdapter ABC가 아닌 KISBroker 전용 메서드(Alpaca는 notional 직접 지원해 이 개념 자체가 불필요). review-loop 1차: data[\"output\"][\"stck_prpr\"] 직접 인덱싱이 같은 파일의 다른 메서드(.get() 방어 패턴)와 불일치 — 거래정지/상장폐지 종목이 rt_cd=0인데 output이 비어있으면 원인불명 KeyError로 죽는 문제 발견, .get() 체인 + 명확한 도메인 에러로 수정, 회귀 테스트 추가. 2차: 수정 내역 없음(price=0인 경우도 기존 유한성/양수 체크로 이미 방어됨 확인). 신규 테스트 5건. pytest tests/ -v 370개 전체 통과, leakage-guard 통과."
     }
   ],
   "next_action": "Phase 4 KR 원자적 순서 4단계 — plan/10 §C-4 4번: safety.py는 US 트랙에서 이미 track 파라미터로 격리된 공유 모듈이라 그대로 재사용(재작성 금지). decide_kr.py/execute_kr.py 신규 작성(decide_us.py/execute_us.py를 KR 시장 필터로 구조 그대로 미러링하되, KIS는 notional 미지원이므로 compute_target_allocations()가 만드는 notional을 execute_kr.py에서 정수 qty로 변환하는 로직을 명시적으로 설계해야 함 — kis.py::place_market_order()가 notional을 거부하도록 이미 구현됨, 가격 조회 방법 결정 필요). cron 등록은 decide 07:00 KST / execute 09:00 KST(plan/10 §B-6) 준비만 해두고 실제 시스템 crontab 설치는 보류 (KIS 앱키 미설정, 무인 운영은 별도 승인 필요).",
