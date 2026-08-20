@@ -20,7 +20,7 @@ from src.live.safety import (
 
 
 def test_load_state_returns_none_when_missing(tmp_path):
-    assert load_state(tmp_path) is None
+    assert load_state(tmp_path, "us") is None
 
 
 def test_save_and_load_state_round_trip(tmp_path):
@@ -31,8 +31,8 @@ def test_save_and_load_state_round_trip(tmp_path):
         nav_anchor=1800.0,
         updated_at="2026-08-20T00:00:00+00:00",
     )
-    save_state(tmp_path, state)
-    loaded = load_state(tmp_path)
+    save_state(tmp_path, "us", state)
+    loaded = load_state(tmp_path, "us")
 
     assert loaded.positions == state.positions
     assert loaded.cash == state.cash
@@ -42,43 +42,80 @@ def test_save_and_load_state_round_trip(tmp_path):
 
 def test_save_and_load_state_round_trips_last_executed_date(tmp_path):
     state = LiveState(positions={}, cash=100.0, nav=100.0, nav_anchor=100.0, last_executed_date="2026-08-20")
-    save_state(tmp_path, state)
-    loaded = load_state(tmp_path)
+    save_state(tmp_path, "us", state)
+    loaded = load_state(tmp_path, "us")
     assert loaded.last_executed_date == "2026-08-20"
 
 
 def test_load_state_backward_compatible_with_missing_last_executed_date_field(tmp_path):
-    """last_executed_date 필드가 생기기 전에 저장된 state.json도(그 필드가
-    아예 없는 JSON) 깨지지 않고 None으로 읽혀야 한다."""
+    """last_executed_date 필드가 생기기 전에 저장된 state_{track}.json도(그
+    필드가 아예 없는 JSON) 깨지지 않고 None으로 읽혀야 한다."""
     import json
 
-    path = tmp_path / "live" / "state.json"
+    path = tmp_path / "live" / "state_us.json"
     path.parent.mkdir(parents=True)
     old_payload = {"positions": {}, "cash": 1.0, "nav": 1.0, "nav_anchor": 1.0, "updated_at": "2024-01-01"}
     path.write_text(json.dumps(old_payload), encoding="utf-8")
 
-    loaded = load_state(tmp_path)
+    loaded = load_state(tmp_path, "us")
     assert loaded.last_executed_date is None
 
 
 def test_bootstrap_creates_state_with_nav_anchor_equal_to_current_nav(tmp_path):
     positions = {"AAPL": HeldPosition(qty=1.0, avg_entry_price=100.0)}
-    state = load_or_bootstrap_state(tmp_path, positions, current_cash=900.0, current_nav=1000.0)
+    state = load_or_bootstrap_state(tmp_path, "us", positions, current_cash=900.0, current_nav=1000.0)
 
     assert state.nav_anchor == pytest.approx(1000.0)
     assert state.nav == pytest.approx(1000.0)
-    assert load_state(tmp_path) is not None  # 즉시 저장됐어야 함
+    assert load_state(tmp_path, "us") is not None  # 즉시 저장됐어야 함
 
 
 def test_bootstrap_does_not_overwrite_existing_nav_anchor(tmp_path):
     """nav_anchor는 최초 배포 시점에만 정해지고 이후 절대 다시 계산되면
     안 된다 — observation.py의 nav_ratio 정의(배포 시점 기준)와 어긋난다."""
-    first = load_or_bootstrap_state(tmp_path, {}, current_cash=1000.0, current_nav=1000.0)
+    first = load_or_bootstrap_state(tmp_path, "us", {}, current_cash=1000.0, current_nav=1000.0)
     assert first.nav_anchor == pytest.approx(1000.0)
 
     # 다음 날 NAV가 바뀐 상태로 다시 호출해도 nav_anchor는 그대로여야 함
-    second = load_or_bootstrap_state(tmp_path, {}, current_cash=1200.0, current_nav=1200.0)
+    second = load_or_bootstrap_state(tmp_path, "us", {}, current_cash=1200.0, current_nav=1200.0)
     assert second.nav_anchor == pytest.approx(1000.0)
+
+
+def test_state_is_isolated_per_track(tmp_path):
+    """KR/US 트랙이 같은 DATA_ROOT를 공유해도(plan/10 §0-5 독립 개발, 두
+    세션이 이 모듈을 같이 재사용) 서로 다른 계좌(원화 KIS vs 달러 Alpaca)의
+    상태가 섞이면 안 된다 — track별로 완전히 분리된 파일이어야 한다(KR
+    트랙과의 간섭 여부를 점검하다 발견한 설계 공백을 수정)."""
+    us_state = LiveState(positions={"AAPL": HeldPosition(qty=1.0, avg_entry_price=100.0)}, cash=500.0, nav=1000.0, nav_anchor=1000.0)
+    kr_state = LiveState(positions={"005930": HeldPosition(qty=10.0, avg_entry_price=70000.0)}, cash=5_000_000.0, nav=10_000_000.0, nav_anchor=10_000_000.0)
+
+    save_state(tmp_path, "us", us_state)
+    save_state(tmp_path, "kr", kr_state)
+
+    loaded_us = load_state(tmp_path, "us")
+    loaded_kr = load_state(tmp_path, "kr")
+
+    assert loaded_us.cash == pytest.approx(500.0)
+    assert loaded_us.nav == pytest.approx(1000.0)
+    assert set(loaded_us.positions) == {"AAPL"}
+
+    assert loaded_kr.cash == pytest.approx(5_000_000.0)
+    assert loaded_kr.nav == pytest.approx(10_000_000.0)
+    assert set(loaded_kr.positions) == {"005930"}
+
+    assert (tmp_path / "live" / "state_us.json").exists()
+    assert (tmp_path / "live" / "state_kr.json").exists()
+
+
+def test_bootstrap_is_isolated_per_track(tmp_path):
+    """load_or_bootstrap_state()도 track별로 독립적으로 부트스트랩돼야 한다
+    — 한쪽 트랙의 최초 배포가 다른 쪽의 state 파일에 영향을 주면 안 된다."""
+    us_state = load_or_bootstrap_state(tmp_path, "us", {}, current_cash=1000.0, current_nav=1000.0)
+    kr_state = load_or_bootstrap_state(tmp_path, "kr", {}, current_cash=10_000_000.0, current_nav=10_000_000.0)
+
+    assert us_state.nav_anchor == pytest.approx(1000.0)
+    assert kr_state.nav_anchor == pytest.approx(10_000_000.0)
+    assert load_state(tmp_path, "us").nav_anchor == pytest.approx(1000.0)  # us 파일이 kr 부트스트랩으로 안 바뀜
 
 
 # ---------------------------------------------------------------------- #

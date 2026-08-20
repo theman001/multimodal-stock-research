@@ -95,7 +95,7 @@ def run_execute(
             if not broker.is_market_open():
                 return []  # 아직 장이 안 열림 — 넓은 cron 윈도우 전제, 조용히 종료
 
-            state = load_or_bootstrap_state(data_root, broker.get_positions(), broker.get_cash(), broker.get_nav())
+            state = load_or_bootstrap_state(data_root, "us", broker.get_positions(), broker.get_cash(), broker.get_nav())
             if state.last_executed_date == str(target_date.date()):
                 # 넓은 폴링 윈도우 안에서 이미 오늘(KST) 체결이 끝났다 — 그대로
                 # 다시 제출하면 주문이 중복된다(모듈 docstring 참고). state.updated_at은
@@ -136,6 +136,7 @@ def run_execute(
             final_nav = broker.get_nav()
             save_state(
                 data_root,
+                "us",
                 LiveState(
                     positions=final_positions,
                     cash=final_cash,

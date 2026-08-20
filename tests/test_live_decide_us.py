@@ -196,10 +196,10 @@ def test_run_decide_bootstraps_state_on_first_run(data_root):
     ohlcv = pd.read_parquet(data_root / "processed" / "ohlcv_meta_us.parquet")
     target_date = ohlcv["date"].max()
 
-    assert load_state(data_root) is None
+    assert load_state(data_root, "us") is None
     run_decide(data_root=data_root, target_date=target_date, broker=broker)
 
-    state = load_state(data_root)
+    state = load_state(data_root, "us")
     assert state is not None
     assert state.nav_anchor == pytest.approx(1000.0)
 
@@ -213,7 +213,7 @@ def test_run_decide_raises_on_reconciliation_mismatch(data_root):
     target_date = ohlcv["date"].max()
 
     # 어제 상태를 미리 기록(현금 1000) — 오늘 브로커는 현금 100만 보고(큰 괴리)
-    save_state(data_root, LiveState(positions={}, cash=1000.0, nav=1000.0, nav_anchor=1000.0, updated_at="2024-01-01"))
+    save_state(data_root, "us", LiveState(positions={}, cash=1000.0, nav=1000.0, nav_anchor=1000.0, updated_at="2024-01-01"))
     broker = _FakeBroker(positions={}, cash=100.0, nav=100.0)
 
     with pytest.raises(RuntimeError, match="재구성 불일치"):
@@ -234,7 +234,7 @@ def test_run_decide_suppresses_buys_when_kill_switch_triggers(data_root):
     ohlcv = pd.read_parquet(data_root / "processed" / "ohlcv_meta_us.parquet")
     target_date = ohlcv["date"].max()
 
-    save_state(data_root, LiveState(positions={}, cash=1000.0, nav=2000.0, nav_anchor=2000.0, updated_at="2024-01-01"))
+    save_state(data_root, "us", LiveState(positions={}, cash=1000.0, nav=2000.0, nav_anchor=2000.0, updated_at="2024-01-01"))
     broker = _FakeBroker(positions={}, cash=1000.0, nav=1000.0)  # obs_result.nav = cash+0 = 1000.0 -> 전일(2000) 대비 -50%
 
     import json
@@ -253,7 +253,7 @@ def test_run_decide_sends_warning_notification_when_kill_switch_triggers(data_ro
     ohlcv = pd.read_parquet(data_root / "processed" / "ohlcv_meta_us.parquet")
     target_date = ohlcv["date"].max()
 
-    save_state(data_root, LiveState(positions={}, cash=1000.0, nav=2000.0, nav_anchor=2000.0, updated_at="2024-01-01"))
+    save_state(data_root, "us", LiveState(positions={}, cash=1000.0, nav=2000.0, nav_anchor=2000.0, updated_at="2024-01-01"))
     broker = _FakeBroker(positions={}, cash=1000.0, nav=1000.0)
 
     calls = []
@@ -280,7 +280,7 @@ def test_run_decide_sends_error_notification_on_reconciliation_failure_and_still
     ohlcv = pd.read_parquet(data_root / "processed" / "ohlcv_meta_us.parquet")
     target_date = ohlcv["date"].max()
 
-    save_state(data_root, LiveState(positions={}, cash=1000.0, nav=1000.0, nav_anchor=1000.0, updated_at="2024-01-01"))
+    save_state(data_root, "us", LiveState(positions={}, cash=1000.0, nav=1000.0, nav_anchor=1000.0, updated_at="2024-01-01"))
     broker = _FakeBroker(positions={}, cash=100.0, nav=100.0)  # 큰 괴리 -> 재구성 실패
 
     calls = []

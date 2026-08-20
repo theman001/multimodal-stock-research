@@ -427,9 +427,15 @@
       "status": "done",
       "timestamp": "2026-08-20T07:41:41.814766+00:00",
       "output": "2차 재검토(review-loop): 수정 내역 없음. notify.py 전체와 decide_us.py/execute_us.py의 알림 통합 지점(이중 알림 가능성, executed 플래그 타이밍, send_notification 자체가 예외를 던질 경우 원본 예외가 가려질 위험, 10초 타임아웃이 10분 폴링 주기에 미치는 영향, 알림 문구에 포함되는 NAV/현금 수치의 민감도)를 다시 훑었지만 새로 발견된 실패 시나리오는 없었음."
+    },
+    {
+      "step": "phase4_us_cross_track_interference_check",
+      "status": "done",
+      "timestamp": "2026-08-20T08:06:35.195059+00:00",
+      "output": "사용자가 push 전에 KR 트랙 세션 프롬프트가 US 트랙 구현과 간섭하는지 확인해달라고 요청 — 점검 중 두 가지 실제 크로스트랙 충돌 버그를 발견·수정했다(둘 다 US 트랙 세션 혼자 개발할 때는 충돌 상대가 없어 드러나지 않았던 것). (1) CRITICAL: safety.py::_state_path()가 track 구분 없이 단일 '${DATA_ROOT}/live/state.json'을 썼다 — KR(KIS, 원화)과 US(Alpaca, 달러)가 물리적으로 분리된 계좌를 각자 운영하는데(Phase4 핵심 결정 4), KR 트랙 세션이 safety.py를 '공유, 재사용'하라는 지시대로 그대로 쓰면 두 트랙의 NAV/현금/포지션이 같은 파일에서 서로 덮어써 재구성 체크가 거의 매번 실패하거나(통화 단위가 다른 숫자를 비교) 킬스위치가 엉뚱한 기준으로 발동하는 상황이 됐을 것. load_state/save_state/load_or_bootstrap_state에 필수 track 파라미터(us/kr) 추가, 파일명을 state_{track}.json으로 분리. decide_us.py/execute_us.py 호출부 수정. (2) daily_pipeline.py::merge_ohlcv_meta()가 공유 산출물 ohlcv_meta.parquet에 to_parquet()으로 직접(비원자적으로) 썼다 — KR/US 둘 다 같은 07:00~08:00 KST cron 창에서 이 함수를 각자 부르므로(plan/10 §B-6), 한쪽이 쓰는 도중 다른 쪽이 읽으면(build_live_features_window) parquet 포맷 특성상 손상된 파일을 만나 그날 decide 사이클이 크래시할 수 있었다. tmp-then-rename 패턴(다른 곳과 동일)으로 수정, 실패 시 tmp 파일 정리. 회귀 테스트 5건 추가(state 격리 2건, atomic write 2건 — 둘 다 수정 전 코드로 재현해 실제로 실패함을 확인 후 복구, merge_ohlcv_meta 관련 기존 테스트명 하나는 더 정확한 이름으로 교체). pytest tests/ -v 325개 전체 통과, leakage-guard 통과. 이 수정 덕분에 KR 트랙 세션이 제안된 프롬프트대로(공유 모듈 그대로 재사용) 진행해도 안전함을 확인."
     }
   ],
-  "next_action": "Phase 4 US 트랙 Step 5(notify.py) review-loop 2차에서 클린 — 커밋 여부 사용자 확인 대기. 이후 6단계(일정 기간 무인 모의투자 운영)는 이 세션이 결정하지 않음(별도 재승인 필요) — Alpaca 모의투자 API 키/.env, MATTERMOST_WEBHOOK_URL 설정, cron 실제 설치는 모두 사용자 액션 필요.",
+  "next_action": "Phase 4 US 트랙 코드 구현(1~5단계) + 크로스트랙 충돌 수정까지 완료, 커밋 후 원격에 push 예정. KR 트랙 세션은 이제 안전하게 공유 모듈(observation/infer/allocation/safety/notify/broker base)을 재사용할 수 있음(state 파일이 track별로 분리됨, ohlcv_meta.parquet 쓰기가 원자적임). US 6단계(무인 모의투자 운영)는 여전히 사용자 액션 대기 — Alpaca API 키/.env, MATTERMOST_WEBHOOK_URL 설정, cron 설치 필요.",
   "blockers": [
     "Alpaca 모의투자 API 키(.env)가 아직 미설정 — 실제 cron 가동 전 사용자가 발급/설정 필요",
     "MATTERMOST_WEBHOOK_URL(.env)이 아직 미설정 — 알림이 stderr 로그로만 남고 실제 Mattermost에는 전송되지 않음, 사용자가 webhook URL 설정 필요"

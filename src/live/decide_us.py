@@ -87,7 +87,7 @@ def run_decide(
             current_cash = broker.get_cash()
             current_nav_from_broker = broker.get_nav()
 
-            state = load_or_bootstrap_state(data_root, current_positions, current_cash, current_nav_from_broker)
+            state = load_or_bootstrap_state(data_root, "us", current_positions, current_cash, current_nav_from_broker)
             check_reconciliation(current_positions, current_cash, state)
 
             collect_us(data_root)

@@ -78,6 +78,7 @@ def test_run_execute_skips_when_already_executed_today(tmp_path):
     체결이 끝났으면(last_executed_date==오늘) 다시 제출하면 안 된다."""
     save_state(
         tmp_path,
+        "us",
         LiveState(
             positions={}, cash=1000.0, nav=1000.0, nav_anchor=1000.0,
             updated_at="2024-01-01", last_executed_date=str(TARGET_DATE.date()),
@@ -108,7 +109,7 @@ def test_run_execute_does_not_skip_on_first_ever_run(tmp_path):
 
 
 def test_run_execute_submits_buy_orders(tmp_path):
-    save_state(tmp_path, LiveState(positions={}, cash=1000.0, nav=1000.0, nav_anchor=1000.0, updated_at="2024-01-01"))
+    save_state(tmp_path, "us", LiveState(positions={}, cash=1000.0, nav=1000.0, nav_anchor=1000.0, updated_at="2024-01-01"))
     _write_decision(tmp_path, TARGET_DATE, [{"ticker": "AAPL", "side": "buy", "notional": 40.0, "market_id": 0}])
     broker = _FakeBroker(positions={}, cash=1000.0, nav=1000.0)
 
@@ -123,6 +124,7 @@ def test_run_execute_sells_using_current_broker_qty_not_notional(tmp_path):
     결정해야 한다(allocation.py 설계 그대로)."""
     save_state(
         tmp_path,
+        "us",
         LiveState(
             positions={"AAPL": HeldPosition(qty=7.0, avg_entry_price=100.0)},
             cash=0.0,
@@ -140,7 +142,7 @@ def test_run_execute_sells_using_current_broker_qty_not_notional(tmp_path):
 
 
 def test_run_execute_skips_sell_when_no_longer_held(tmp_path):
-    save_state(tmp_path, LiveState(positions={}, cash=1000.0, nav=1000.0, nav_anchor=1000.0, updated_at="2024-01-01"))
+    save_state(tmp_path, "us", LiveState(positions={}, cash=1000.0, nav=1000.0, nav_anchor=1000.0, updated_at="2024-01-01"))
     _write_decision(tmp_path, TARGET_DATE, [{"ticker": "AAPL", "side": "sell", "notional": None, "market_id": 0}])
     broker = _FakeBroker(positions={}, cash=1000.0, nav=1000.0)  # 이미 청산돼 없음
 
@@ -151,7 +153,7 @@ def test_run_execute_skips_sell_when_no_longer_held(tmp_path):
 
 
 def test_run_execute_filters_out_non_us_orders(tmp_path):
-    save_state(tmp_path, LiveState(positions={}, cash=1000.0, nav=1000.0, nav_anchor=1000.0, updated_at="2024-01-01"))
+    save_state(tmp_path, "us", LiveState(positions={}, cash=1000.0, nav=1000.0, nav_anchor=1000.0, updated_at="2024-01-01"))
     _write_decision(
         tmp_path,
         TARGET_DATE,
@@ -169,13 +171,13 @@ def test_run_execute_filters_out_non_us_orders(tmp_path):
 
 
 def test_run_execute_updates_state_after_execution_preserving_nav_anchor(tmp_path):
-    save_state(tmp_path, LiveState(positions={}, cash=1000.0, nav=1000.0, nav_anchor=1000.0, updated_at="2024-01-01"))
+    save_state(tmp_path, "us", LiveState(positions={}, cash=1000.0, nav=1000.0, nav_anchor=1000.0, updated_at="2024-01-01"))
     _write_decision(tmp_path, TARGET_DATE, [{"ticker": "AAPL", "side": "buy", "notional": 40.0, "market_id": 0}])
     broker = _FakeBroker(positions={}, cash=1000.0, nav=1000.0)
 
     run_execute(mode="paper", data_root=tmp_path, target_date=TARGET_DATE, broker=broker)
 
-    new_state = load_state(tmp_path)
+    new_state = load_state(tmp_path, "us")
     assert new_state.nav_anchor == pytest.approx(1000.0)  # 배포 기준선은 절대 안 바뀜
     assert "AAPL" in new_state.positions
     assert new_state.cash == pytest.approx(960.0)  # 1000 - 40(주문 notional)
@@ -209,7 +211,7 @@ def test_run_execute_raises_on_missing_decision_file(tmp_path):
 
 
 def test_run_execute_raises_on_reconciliation_mismatch(tmp_path):
-    save_state(tmp_path, LiveState(positions={}, cash=1000.0, nav=1000.0, nav_anchor=1000.0, updated_at="2024-01-01"))
+    save_state(tmp_path, "us", LiveState(positions={}, cash=1000.0, nav=1000.0, nav_anchor=1000.0, updated_at="2024-01-01"))
     _write_decision(tmp_path, TARGET_DATE, [{"ticker": "AAPL", "side": "buy", "notional": 40.0, "market_id": 0}])
     broker = _FakeBroker(positions={}, cash=100.0, nav=100.0)  # 예상 밖으로 현금이 크게 다름
 
@@ -220,7 +222,7 @@ def test_run_execute_raises_on_reconciliation_mismatch(tmp_path):
 def test_run_execute_blocked_by_concurrent_lock(tmp_path):
     from src.live.safety import acquire_run_lock
 
-    save_state(tmp_path, LiveState(positions={}, cash=1000.0, nav=1000.0, nav_anchor=1000.0, updated_at="2024-01-01"))
+    save_state(tmp_path, "us", LiveState(positions={}, cash=1000.0, nav=1000.0, nav_anchor=1000.0, updated_at="2024-01-01"))
     _write_decision(tmp_path, TARGET_DATE, [])
     broker = _FakeBroker(positions={}, cash=1000.0, nav=1000.0)
 
@@ -247,7 +249,7 @@ def test_run_execute_sends_no_notification_on_routine_no_op_polls(tmp_path):
 
 
 def test_run_execute_sends_info_notification_after_actually_executing(tmp_path):
-    save_state(tmp_path, LiveState(positions={}, cash=1000.0, nav=1000.0, nav_anchor=1000.0, updated_at="2024-01-01"))
+    save_state(tmp_path, "us", LiveState(positions={}, cash=1000.0, nav=1000.0, nav_anchor=1000.0, updated_at="2024-01-01"))
     _write_decision(tmp_path, TARGET_DATE, [{"ticker": "AAPL", "side": "buy", "notional": 40.0, "market_id": 0}])
     broker = _FakeBroker(positions={}, cash=1000.0, nav=1000.0)
 
@@ -266,7 +268,7 @@ def test_run_execute_sends_info_notification_after_actually_executing(tmp_path):
 
 
 def test_run_execute_sends_error_notification_on_reconciliation_failure_and_still_raises(tmp_path):
-    save_state(tmp_path, LiveState(positions={}, cash=1000.0, nav=1000.0, nav_anchor=1000.0, updated_at="2024-01-01"))
+    save_state(tmp_path, "us", LiveState(positions={}, cash=1000.0, nav=1000.0, nav_anchor=1000.0, updated_at="2024-01-01"))
     _write_decision(tmp_path, TARGET_DATE, [{"ticker": "AAPL", "side": "buy", "notional": 40.0, "market_id": 0}])
     broker = _FakeBroker(positions={}, cash=100.0, nav=100.0)  # 큰 괴리 -> 재구성 실패
 
@@ -289,7 +291,7 @@ def test_run_execute_respects_order_cap_even_if_decision_file_is_stale(tmp_path)
     """decide_us.py가 아침에 이미 캡을 적용했지만, 저녁 체결 시점에 NAV가
     바뀌었을 수 있으므로 execute_us.py도 독립적으로 다시 캡을 검증해야
     한다."""
-    save_state(tmp_path, LiveState(positions={}, cash=1000.0, nav=1000.0, nav_anchor=1000.0, updated_at="2024-01-01"))
+    save_state(tmp_path, "us", LiveState(positions={}, cash=1000.0, nav=1000.0, nav_anchor=1000.0, updated_at="2024-01-01"))
     # 하드캡(NAV의 10%)을 넘는 주문을 결정 파일에 인위적으로 넣음(아침엔 NAV가 훨씬 컸다고 가정)
     _write_decision(tmp_path, TARGET_DATE, [{"ticker": "AAPL", "side": "buy", "notional": 500.0, "market_id": 0}])
     broker = _FakeBroker(positions={}, cash=1000.0, nav=1000.0)  # NAV의 10% = 100 < 500

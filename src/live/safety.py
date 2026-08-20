@@ -2,9 +2,24 @@
 
 이 모듈의 체크는 전부 "주문을 막는" 방향으로만 작동한다 — allocation.py의
 배분 로직이 이미 올바르다고 믿지 않고 방어적으로 이중 확인한다. 상태
-(`LiveState`)는 `${DATA_ROOT}/live/state.json`에 원자적으로 저장한다
+(`LiveState`)는 `${DATA_ROOT}/live/state_{track}.json`에 원자적으로 저장한다
 (`progress_log.json`과 동일한 tmp-then-rename 패턴, CLAUDE.md "진행 로그
 프로토콜" 참고).
+
+**`track`은 필수 파라미터다("us"/"kr").** plan/10 §B-5 원안의 pseudocode는
+단일 `${DATA_ROOT}/live/state.json`이었지만(마치 decide_us.py 도입 전
+`${DATA_ROOT}/live/decisions/{date}.json`이 시장 구분 없던 것과 동일한
+설계 공백), KR/US가 물리적으로 분리된 계좌(원화 KIS vs 달러 Alpaca,
+Phase 4 핵심 결정 4번)를 각자 독립적으로 운영한다는 전제 자체가 두 트랙이
+같은 state 파일을 공유하면 안 된다는 뜻이다 — 공유하면 한쪽 트랙의
+NAV/현금/포지션(KRW)이 다른 쪽(USD)의 재구성 체크·nav_anchor·킬스위치
+기준선을 그대로 덮어써서, 두 트랙 모두 매 실행마다 재구성 불일치로
+막히거나(통화 단위 자체가 다른 숫자를 비교) 킬스위치가 값이 안 맞는 채로
+엉뚱하게 발동한다. decide_us.py/execute_us.py가 이미 락 이름("decide_us"/
+"execute_us")과 결정 파일명("us_{date}.json")에 적용한 것과 동일한 원칙을
+state 파일에도 적용한다(KR 트랙 세션이 이 모듈을 그대로 재사용할 예정이라
+그 시점에 실제로 충돌하기 전에 여기서 막음 — 다른 세션과의 간섭 여부를
+점검하다 발견).
 
 기본값은 어디에도 `live=True`가 없다(Phase 4 핵심 결정 1번) — 이 모듈
 자체는 브로커를 직접 호출하지 않으므로 mode 파라미터가 없다.
@@ -57,12 +72,12 @@ class LiveState:
     last_executed_date: str | None = None
 
 
-def _state_path(data_root: Path) -> Path:
-    return data_root / "live" / "state.json"
+def _state_path(data_root: Path, track: str) -> Path:
+    return data_root / "live" / f"state_{track}.json"
 
 
-def load_state(data_root: Path) -> LiveState | None:
-    path = _state_path(data_root)
+def load_state(data_root: Path, track: str) -> LiveState | None:
+    path = _state_path(data_root, track)
     if not path.exists():
         return None
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -78,8 +93,8 @@ def load_state(data_root: Path) -> LiveState | None:
     )
 
 
-def save_state(data_root: Path, state: LiveState) -> None:
-    path = _state_path(data_root)
+def save_state(data_root: Path, track: str, state: LiveState) -> None:
+    path = _state_path(data_root, track)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "positions": {t: {"qty": p.qty, "avg_entry_price": p.avg_entry_price} for t, p in state.positions.items()},
@@ -96,13 +111,13 @@ def save_state(data_root: Path, state: LiveState) -> None:
 
 
 def load_or_bootstrap_state(
-    data_root: Path, current_positions: dict[str, HeldPosition], current_cash: float, current_nav: float
+    data_root: Path, track: str, current_positions: dict[str, HeldPosition], current_cash: float, current_nav: float
 ) -> LiveState:
-    """state.json이 있으면 그대로 읽어 반환한다(절대 여기서 갱신하지 않음 —
-    갱신은 execute_*.py가 실제 주문 이후에만 한다). 없으면(최초 배포) 지금
-    이 순간을 기준선으로 새로 만들어 즉시 저장한다 — nav_anchor는 이때
+    """`state_{track}.json`이 있으면 그대로 읽어 반환한다(절대 여기서 갱신하지
+    않음 — 갱신은 execute_*.py가 실제 주문 이후에만 한다). 없으면(최초 배포)
+    지금 이 순간을 기준선으로 새로 만들어 즉시 저장한다 — nav_anchor는 이때
     한 번만 정해지고 이후 다시는 안 바뀐다."""
-    state = load_state(data_root)
+    state = load_state(data_root, track)
     if state is not None:
         return state
     state = LiveState(
@@ -112,7 +127,7 @@ def load_or_bootstrap_state(
         nav_anchor=current_nav,
         updated_at=datetime.now(timezone.utc).isoformat(),
     )
-    save_state(data_root, state)
+    save_state(data_root, track, state)
     return state
 
 

@@ -89,6 +89,61 @@ def test_merge_ohlcv_meta_raises_if_both_missing(data_root):
         merge_ohlcv_meta(data_root)
 
 
+def test_merge_ohlcv_meta_writes_through_a_temp_file_not_the_final_path_directly(data_root, monkeypatch):
+    """실제 원자성의 근거는 '최종 경로에 직접 쓰지 않고 임시 파일에 쓴 뒤
+    os.replace()로 스왑한다'는 점이다 — to_parquet()이 실제로 어느 경로에
+    쓰는지를 가로채서 확인한다(최종 경로가 아니어야 함)."""
+    us = _make_ohlcv(["AAPL"], 5, market_id=0)
+    us.to_parquet(data_root / "processed" / "ohlcv_meta_us.parquet", index=False)
+    output_path = data_root / "processed" / "ohlcv_meta.parquet"
+
+    written_paths = []
+    original_to_parquet = pd.DataFrame.to_parquet
+
+    def _spy(self, path, *args, **kwargs):
+        written_paths.append(str(path))
+        return original_to_parquet(self, path, *args, **kwargs)
+
+    monkeypatch.setattr(pd.DataFrame, "to_parquet", _spy)
+    merge_ohlcv_meta(data_root)
+
+    assert len(written_paths) == 1
+    assert written_paths[0] != str(output_path)  # 최종 경로가 아니라 임시 파일에 먼저 씀
+    assert output_path.exists()
+    leftover_tmp = list((data_root / "processed").glob("*.tmp"))
+    assert leftover_tmp == []  # os.replace 이후 임시 파일이 안 남아야 함
+
+
+def test_merge_ohlcv_meta_leaves_existing_file_untouched_if_rename_fails(data_root, monkeypatch):
+    """KR/US 두 트랙이 같은 07:00~08:00 KST 창에 cron으로 이 함수를 각자
+    호출한다(plan/10 §B-6) — 직접 to_parquet()했다면 한쪽이 쓰는 도중 다른
+    쪽이 읽어(build_live_features_window) 손상된 파일을 만날 수 있었다(KR
+    트랙과의 간섭 여부를 점검하다 발견). tmp-then-rename으로 고쳤으므로,
+    최종 스왑(os.replace) 직전에 실패해도 기존 파일이 훼손되지 않고 임시
+    파일도 안 남아야 한다. (구 코드는 to_parquet()으로 직접 최종 경로에
+    썼으므로 os.replace를 아예 호출하지 않아 이 테스트로 구분 가능함.)"""
+    us = _make_ohlcv(["AAPL"], 5, market_id=0)
+    us.to_parquet(data_root / "processed" / "ohlcv_meta_us.parquet", index=False)
+
+    good_existing = _make_ohlcv(["ZZZZ"], 3, market_id=0)
+    output_path = data_root / "processed" / "ohlcv_meta.parquet"
+    good_existing.to_parquet(output_path, index=False)
+
+    import os as os_module
+
+    def _boom(*args, **kwargs):
+        raise OSError("디스크 꽉 참을 흉내(rename 직전 실패)")
+
+    monkeypatch.setattr(os_module, "replace", _boom)
+    with pytest.raises(OSError, match="디스크 꽉 참"):
+        merge_ohlcv_meta(data_root)
+
+    survived = pd.read_parquet(output_path)
+    assert set(survived["ticker"].unique()) == {"ZZZZ"}  # 기존 파일이 그대로 남아있어야 함
+    leftover_tmp = list((data_root / "processed").glob("*.tmp"))
+    assert leftover_tmp == []  # 실패해도 임시 파일 청소는 돼야 함
+
+
 def test_build_live_features_window_computes_missing_today_row_matching_compute_features(data_root):
     tickers = ["AAPL", "MSFT"]
     ohlcv_meta = _make_ohlcv(tickers, N_WARMUP_DAYS, market_id=0)

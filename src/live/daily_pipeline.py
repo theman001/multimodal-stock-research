@@ -34,6 +34,8 @@
 """
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -56,7 +58,17 @@ def merge_ohlcv_meta(data_root: Path | None = None) -> pd.DataFrame:
     `ohlcv_meta.parquet`을 다시 쓴다. 한쪽 파일이 아직 없으면(예: KR 트랙이
     한 번도 안 돌았거나 이 저장소를 처음 clone한 경우) 있는 쪽만으로 만든다
     — 두 트랙이 독립적으로 개발된다는 설계(plan/10 §0-5)상 한쪽이 없다고
-    막으면 안 된다."""
+    막으면 안 된다.
+
+    출력 파일에 직접 `to_parquet()`하지 않고 tmp-then-rename으로 쓴다
+    (`safety.py::save_state()`/`progress_log.json`과 동일한 패턴). plan/10
+    §B-6이 KR/US 두 트랙의 decide_*.py를 같은 07:00~08:00 KST 창에 cron으로
+    돌리도록 설계했는데, 이 함수는 양쪽 트랙이 똑같이 호출하는 **공유** 산출물
+    이라 — 직접 쓰기였다면 한쪽이 쓰는 도중(parquet은 파일 끝에 메타데이터
+    footer를 쓰는 포맷이라 쓰기 중간 상태는 유효하지 않음) 다른 쪽이 같은
+    파일을 읽어(`build_live_features_window()`) 손상된 파일을 만나 그날의
+    decide 사이클 전체가 크래시할 수 있었다(KR 트랙과의 간섭 여부를 점검하다
+    발견 — 두 트랙이 붙기 전에는 동시 쓰기 자체가 없어 드러나지 않았음)."""
     data_root = data_root or get_data_root()
     processed = data_root / "processed"
 
@@ -70,7 +82,14 @@ def merge_ohlcv_meta(data_root: Path | None = None) -> pd.DataFrame:
 
     combined = pd.concat(frames, ignore_index=True)
     output_path = processed / "ohlcv_meta.parquet"
-    combined.to_parquet(output_path, index=False)
+    fd, tmp_path = tempfile.mkstemp(dir=processed, suffix=".tmp")
+    os.close(fd)
+    try:
+        combined.to_parquet(tmp_path, index=False)
+        os.replace(tmp_path, output_path)
+    except BaseException:
+        Path(tmp_path).unlink(missing_ok=True)
+        raise
     return combined
 
 
