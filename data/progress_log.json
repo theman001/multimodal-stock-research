@@ -1,6 +1,6 @@
 {
   "phase": "4",
-  "last_completed_step": "phase4_us_data_incrementalization_fixed",
+  "last_completed_step": "phase4_us_shared_step2_review_round13",
   "steps": [
     {
       "step": "us_data_collection",
@@ -235,8 +235,98 @@
       "status": "done",
       "timestamp": "2026-08-20T02:05:39.759248+00:00",
       "output": "src/data_collection/ohlcv.py::fetch_us_ohlcv() + src/data_collection/events_us.py::fetch_us_filings()에 incremental=True(기본값) 추가 — 캐시 존재 시 통째로 반환하던 버그 수정, 캐시 마지막 date/filingDate 이후만 재조회 후 append+dedup(date/accessionNumber 기준). tests/test_ohlcv.py(신규 6건) + tests/test_events_us.py(신규 5건, 기존 5건 유지) mock 기반(실네트워크 호출 없음). pytest tests/ -v 185개 전체 통과."
+    },
+    {
+      "step": "phase4_us_shared_observation_infer_allocation",
+      "status": "done",
+      "timestamp": "2026-08-20T02:26:14.264506+00:00",
+      "output": "src/live/observation.py::build_today_observation() 신규 — build_grid()를 재사용하되 target_date 하루가 아니라 lookback_days=30 윈도우로 넘겨야 _ticker_market_ids()가 깨지지 않음을 확인해 그렇게 구현(구현 중 발견한 설계 디테일). TradingEnv._build_observation()과 동일 채널 순서(정적블록[:-1]+holding_flag/unrealized_return/position_weight+valid_mask), 동적 필드는 브로커 포지션(HeldPosition: qty/avg_entry_price)에서 계산. step_frac=0 고정/nav_ratio는 nav_anchor 대비로 잠정 처리(plan/10 §D 미해결 항목, 모의투자로 사후 검증 예정). src/live/infer.py::predict_action() — load_checkpoint()+model.predict(deterministic=True) 재사용, evaluate.py의 include_event_features 불일치 검증 패턴 재사용. src/live/allocation.py::compute_target_allocations() — TradingEnv.step()의 SELL-먼저-정산 후 BUY equal_share/cap 배분 로직을 순수함수로 재구현(비용 차감은 브로커가 실제로 부과하므로 제외, plan/10 §B-4). tests/test_live_observation.py(4건, build_grid 배치경로와 수치 일치 직접 대조) + test_live_infer.py(3건) + test_live_allocation.py(8건, TradingEnv 실행 결과와 직접 수치 대조 포함) 신규. leakage-guard 체크(rolling/.fit( 없음, transform만 사용) 통과. pytest tests/ -v 200개 전체 통과."
+    },
+    {
+      "step": "phase4_us_shared_step2_review_round",
+      "status": "done",
+      "timestamp": "2026-08-20T02:38:14.405425+00:00",
+      "output": "observation.py/allocation.py 재검토로 실제 버그 4건 발견·수정: (1) observation.py — 보유 중인 티커의 오늘 가격이 마스킹되면 position_value가 0으로 남아 NAV/position_weight에서 그 포지션 가치가 통째로 사라지던 버그. TradingEnv의 mark-to-market과 동일하게 윈도우 내 마지막 유효 종가를 carry-forward 하도록 수정(더 이전 데이터도 없으면 평단가로 최종 폴백). (2) observation.py — avg_entry_price<=0일 때 division으로 NaN/Inf가 정책 입력에 흘러들어갈 수 있던 부분 가드 추가. (3) observation.py — target_date가 tz-aware로 들어오면 features.parquet의 tz-naive 날짜와 비교가 어긋날 수 있던 부분에 tz_localize(None) 방어 추가. (4) allocation.py — cash/nav가 비정상 음수일 때 equal_share/cap이 음수가 돼 '매수금액이 음수인 BUY 주문'이 만들어질 수 있던 버그, 0 이하면 BUY 주문 자체를 만들지 않도록 수정. 추가로 allocation.py 문서에 '마스킹 연속일수 강제청산 (TradingEnv의 MAX_MASKED_STREAK_DAYS 로직)은 상태 추적이 필요해 이 순수함수에 미구현'임을 명시적으로 남김 — safety.py(다음 단계)가 다룰 후보로 플래그. 회귀 테스트 4건 추가(masked-held carry-forward, avg_entry_price=0 가드, tz-aware target_date, negative-cash no-op). pytest tests/ -v 204개 전체 통과, leakage-guard 재점검(rolling/.fit( 없음) 통과."
+    },
+    {
+      "step": "phase4_us_shared_step2_review_round2",
+      "status": "done",
+      "timestamp": "2026-08-20T03:30:18.041995+00:00",
+      "output": "3차 재검토로 추가 발견·수정 2건: (1) observation.py — broker_cash가 NaN/Inf면 nav 전체가 오염되고 그 nav로 나누는 cash_weight/nav_ratio/position_weight까지 120종목 전체 관측이 NaN으로 물드는 문제(개별 포지션이 아니라 관측벡터 전체가 망가지는 훨씬 넓은 반경의 실패). broker_cash/각 HeldPosition.qty·avg_entry_price가 유한하지 않으면 즉시 ValueError로 막도록 입력 검증 추가. (2) TodayObservation에 position_value 필드 누락 — 2차 라운드에서 마스킹된 보유 포지션의 마지막 유효가 carry-forward 계산을 observation.py 내부적으로는 고쳤지만 그 결과를 외부로 노출하지 않아서, decide_us.py(3단계)가 allocation.py::compute_target_allocations()에 넘길 position_values 딕셔너리를 result.close로 만들면 close가 NaN인 바로 그 케이스에서 동일 버그가 통합 지점에서 재발할 위험이 있었음(API 설계 갭) — position_value 배열을 TodayObservation에 추가해 노출. allocation.py의 min/max NaN 처리(Python 내장 min/max가 NaN과 비교 시 항상 False를 반환해 첫 인자를 그대로 보존하는 성질에 우연히 의존해 NaN cash도 안전하게 막힘)를 테스트로 명시적으로 고정. 회귀 테스트 4건 추가. pytest tests/ -v 207개 전체 통과, leakage-guard 재점검 통과."
+    },
+    {
+      "step": "phase4_us_shared_step2_review_round3",
+      "status": "done",
+      "timestamp": "2026-08-20T03:32:35.082658+00:00",
+      "output": "4차 재검토로 추가 발견·수정 2건(둘 다 '조용한 NAV 오염' 계열): (1) observation.py — broker_positions.qty가 음수(숏)면 이 프로젝트의 핵심 설계 결정인 '롱 온리'(CLAUDE.md)를 위반하는데도 조용히 받아들여 position_value가 음수가 되고 NAV를 부당하게 깎을 수 있었음 — 음수 qty는 즉시 ValueError. (2) observation.py — broker_positions에 120종목 RL 유니버스 밖 티커가 있으면(수동 거래/스핀오프 등) tickers 순서로만 순회하는 루프가 그 포지션을 조용히 무시해 NAV에서 그 가치가 통째로 빠짐 — 유니버스 밖 티커가 있으면 즉시 ValueError. 회귀 테스트 2건 추가. pytest tests/ -v 209개 전체 통과, leakage-guard 재점검 통과. observation.py는 이제 4라운드 재검토를 거쳐 브로커발 비정상 입력(NaN/Inf/음수qty/유니버스밖 티커/타임존/가격마스킹) 전반에 대한 방어가 갖춰짐 — 추가 라운드는 사용자 판단에 맡김."
+    },
+    {
+      "step": "phase4_us_long_base_short_strategic_decision",
+      "status": "done",
+      "timestamp": "2026-08-20T03:40:09.191823+00:00",
+      "output": "사용자 결정(2026-08-20): '롱 온리' -> '롱 베이스, 숏은 전략적으로 허용'. 범위 확인 결과(AskUserQuestion) '일단은 관측 계층만, 추후 정책이 능동적으로 숏 진입하는 기능은 별도'로 확정 — rl_policy_v1.zip은 여전히 SELL/HOLD/BUY 3지 선택뿐이라 스스로 숏을 열지 않음(액션 공간을 바꾸는 건 Phase 3 재학습 범위라 이번 Phase 4 세션 밖). observation.py 변경: (1) 직전 라운드에 추가했던 'qty<0이면 롱 온리 위반으로 에러' 검증 제거 — 숏은 이제 정상 입력. (2) unrealized_return 공식이 롱 전제(가격 상승=이익)로 짜여 있어 숏에 부호가거꾸로 나오던 문제를 np.sign(qty)로 보정(가격 상승 시 숏은 손실=음수로 정확히 표시). position_value=qty*price는 원래도 부호 그대로 NAV에 반영돼 수정 불필요. allocation.py는 position_values를 부호 그대로 다루므로(cash += position_value가 음수를 더해 숏 커버링 현금지출을 정확히 반영) 코드 변경 없이 그대로 일반화됨을 확인, 문서에만 명시. 회귀 테스트 교체(long-only 위반 테스트 -> 숏 포지션 부호 정확성 테스트). pytest tests/ -v 209개 전체 통과."
+    },
+    {
+      "step": "phase4_us_shared_step2_review_round4",
+      "status": "done",
+      "timestamp": "2026-08-20T03:44:26.741999+00:00",
+      "output": "5차 재검토로 발견·수정 1건(가장 심각도 높은 통합 지점 버그): allocation.py compute_target_allocations()가 '청산=SELL 주문'이라는 롱 전제를 그대로 갖고 있어서, observation.py가 숏 포지션의 시가평가액을 음수로 정확히 반영하기 시작한 지금(직전 라운드), current_holdings/position_values에 숏이 섞인 채로 정책이 그 티커에 SELL을 내면 실제로 필요한 커버링(매수)과 반대 방향인 SELL 주문이 나갈 수 있는 구조적 함정을 발견 — 아직 decide_us.py가 없어 실제로 발동하진 않았지만 3단계에서 무심코 이어붙이면 바로 실주문 리스크가 되는 지점이라 지금 막음. position_values가 음수인 티커에 SELL 결정이 오면 즉시 ValueError(호출자가 숏을 먼저 걸러내거나 별도 커버링 경로로 처리하도록). 회귀 테스트 2건(숏 SELL 차단 + 롱 SELL은 정상 동작 확인) 추가. 부가로 observation.py의 '숏+가격마스킹 동시 발생' 조합(carry-forward와 부호보정 두 수정의 합성)에 대한 통합 테스트 1건 추가(코드상 상호작용 가능성은 낮다고 판단했으나 명시적으로 고정). pytest tests/ -v 212개 전체 통과, leakage-guard 재점검 통과."
+    },
+    {
+      "step": "phase4_us_shared_step2_review_round5",
+      "status": "done",
+      "timestamp": "2026-08-20T03:46:38.322371+00:00",
+      "output": "6차 재검토로 infer.py에서 1건 발견·수정: predict_action()이 include_event_features 일치만 검증하는데, 이것만으로는 부족함을 발견 — rl_ticker_universe.json이 (이 저장소에서 다른 목적으로 build_panel()/train_agent.py/evaluate.py가 재실행돼) 학습 당시와 다른 티커 구성으로 덮어써지면 include_event_features는 그대로인데도 관측 차원이 달라져 SB3 내부에서 알아보기 힘든 에러로 죽을 수 있음. obs.shape를 model.observation_space.shape와 직접 비교하는 더 일반적인 가드를 추가(기존 include_event_features 체크는 더 구체적인 진단 메시지를 위해 유지). 회귀 테스트 1건 추가. pytest tests/ -v 213개 전체 통과, leakage-guard 재점검 통과. 6라운드 누적 발견 버그 10건."
+    },
+    {
+      "step": "phase4_us_shared_step2_review_round6",
+      "status": "done",
+      "timestamp": "2026-08-20T04:11:51.921802+00:00",
+      "output": "7차 재검토로 직전(5차) 라운드의 수정 자체를 재검토해 설계 결함 발견·수정: 숏 포지션에 SELL이 오면 예외를 던져 그날 전체 배분 결정(120종목 전부)을 통째로 중단시키는 방식이었는데, 이러면 정책이 그 숏 티커에 SELL을 낼 때마다(빈번할 수 있음) 나머지 119종목의 결정까지 매일 막혀 사용자가 확정한 '숏은 전략적으로 유지 가능해야 한다'는 의도와 정면으로 부딪힘을 발견. 예외 대신 그 티커만 조용히 no-op(주문 미생성)으로 건너뛰고 warnings.warn()으로 경고만 남기도록 재설계 — 숏 존재 자체의 최종 감지/알림은 safety.py의 재구성 체크(다음 단계) 몫으로 위임한다는 역할분담을 문서화. 건너뛴 숏의 시가평가액이 cash_after_sells에 잘못 합산돼 다른 종목 BUY 자금으로 이중 사용되지 않는지도 별도 테스트로 확인. 오해를 유발하던 모듈 docstring 문구('cash 계산이 숏에도 자동 일반화된다')도 실제 동작에 맞게 수정. pytest tests/ -v 214개 전체 통과, leakage-guard 재점검 통과. 7라운드 누적 발견 11건(그중 1건은 직전 라운드 자체 수정의 재검토)."
+    },
+    {
+      "step": "phase4_us_shared_step2_review_round7",
+      "status": "done",
+      "timestamp": "2026-08-20T04:18:03.218884+00:00",
+      "output": "8차 재검토: qty==0인 잔여 포지션 항목까지 unknown_tickers/finite 검증에 걸려 매일 불필요하게 막힐 수 있던 과잉검증 2건 수정(observation.py) — unknown_tickers 체크에서 qty==0 제외, avg_entry_price finite 체크도 qty!=0일 때만 적용. 회귀 테스트 2건 추가. pytest 216개 통과."
+    },
+    {
+      "step": "phase4_us_shared_step2_review_round8",
+      "status": "done",
+      "timestamp": "2026-08-20T04:19:54.338263+00:00",
+      "output": "9차 재검토: lookback_days<=0을 허용하면 이 함수가 애초에 피하려던 market_id resolve 실패 버그가 그대로 재현되는데 검증이 없던 문제 발견·수정(observation.py, 즉시 ValueError). 회귀 테스트 1건 추가. pytest 217개 통과."
+    },
+    {
+      "step": "phase4_us_shared_step2_review_round9",
+      "status": "done",
+      "timestamp": "2026-08-20T04:21:03.312951+00:00",
+      "output": "10차 재검토: nav_anchor가 broker_cash처럼 검증되지 않아 NaN/Inf/비양수면 nav_ratio 채널이 오염되고, 신경망은 입력을 층마다 섞으므로 채널 하나의 NaN이 전체 행동 예측을 오염시킬 수 있는 문제 발견·수정(observation.py, 즉시 ValueError). 회귀 테스트 4건(parametrize) 추가. pytest 221개 통과."
+    },
+    {
+      "step": "phase4_us_shared_step2_review_round10",
+      "status": "done",
+      "timestamp": "2026-08-20T04:22:56.332091+00:00",
+      "output": "11차 재검토: infer.py가 observation.py가 만든 obs만 받는다고 전제하지 않는 독립 모듈로 문서화돼 있는데 obs 자체의 유한성 검증이 없어 NaN/Inf가 그대로 model.predict()에 들어갈 수 있던 문제 발견·수정(infer.py, 즉시 ValueError). CLAUDE.md 문서 일관성도 재확인(round7의 raise->warn+skip 변경이 CLAUDE.md 항목8 서술과 충돌 없음 확인, 수정 불필요). 회귀 테스트 1건 추가. pytest 222개 통과."
+    },
+    {
+      "step": "phase4_us_shared_step2_review_round11",
+      "status": "done",
+      "timestamp": "2026-08-20T04:23:57.065298+00:00",
+      "output": "12차 재검토: allocation.py의 tickers/action/valid_mask/has_price 길이가 어긋나면 numpy의 일반 broadcast 에러만 나서 어느 파라미터가 문제인지 안 보이던 문제 발견·수정 — 함수 진입 시 길이 일치를 먼저 검증해 이름 붙은 에러로 막음(infer.py의 shape 체크와 동일 성격). 회귀 테스트 1건 추가. pytest 223개 통과."
+    },
+    {
+      "step": "phase4_us_shared_step2_review_round12",
+      "status": "done",
+      "timestamp": "2026-08-20T04:25:22.558045+00:00",
+      "output": "13차 재검토: 지금까지 입력 검증만 잔뜩 쌓았지 build_today_observation()의 최종 출력(obs) 자체의 유한성을 확인하는 마지막 방어선이 없던 문제 발견·수정 — 반환 직전 np.isfinite(obs).all() 체크 추가(입력 검증을 우회하는 다른 경로의 오염도 오염 발생 지점(observation.py)에서 바로 잡아냄, infer.py의 독립 체크와는 다른 진단 가치). monkeypatch로 transform_obs_features 오염을 시뮬레이션한 회귀 테스트 1건 추가. pytest 224개 통과."
+    },
+    {
+      "step": "phase4_us_shared_step2_review_round13",
+      "status": "done",
+      "timestamp": "2026-08-20T04:27:53.608448+00:00",
+      "output": "14차 재검토: 수정 내역 없음. observation.py/allocation.py/infer.py 전체를 다시 정독하고 allocation.py의 cash/nav 유한성 미검증 가능성도 검토했으나, 기존 min(equal_share,cap) 캡 구조가 이미 안전하게 흡수함을 확인(BUY는 캡으로, SELL 방향은 position_values 부호에만 의존해 cash/nav와 무관)해 실질적 위험 없음으로 결론. CLAUDE.md 문서 일치, pytest 설정(filterwarnings 없음)도 재확인. 8~13차(6라운드) 재검토 반복 종료 — 총 발견 16건 수정 완료, 이번 라운드로 반복 검토 루프를 마치고 커밋 여부를 사용자에게 확인."
     }
   ],
-  "next_action": "Phase 4 US 트랙 2단계: src/live/observation.py + infer.py + allocation.py(공유 모듈, KR 트랙과 공용) 구현 — 사용자 승인 대기",
+  "next_action": "Phase 4 US 트랙 3단계: src/live/broker/base.py(ABC) + src/live/broker/alpaca.py(paper-api.alpaca.markets, mode=paper/live 생성자 파라미터로 도메인/키 분기) 구현, mock 기반 유닛테스트 — 사용자 승인 대기",
   "blockers": []
 }
