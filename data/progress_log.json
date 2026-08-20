@@ -1,6 +1,6 @@
 {
   "phase": "4",
-  "last_completed_step": "phase4_us_step4_review_round3",
+  "last_completed_step": "phase4_kr_step1_review_round3",
   "steps": [
     {
       "step": "us_data_collection",
@@ -433,9 +433,33 @@
       "status": "done",
       "timestamp": "2026-08-20T08:06:35.195059+00:00",
       "output": "사용자가 push 전에 KR 트랙 세션 프롬프트가 US 트랙 구현과 간섭하는지 확인해달라고 요청 — 점검 중 두 가지 실제 크로스트랙 충돌 버그를 발견·수정했다(둘 다 US 트랙 세션 혼자 개발할 때는 충돌 상대가 없어 드러나지 않았던 것). (1) CRITICAL: safety.py::_state_path()가 track 구분 없이 단일 '${DATA_ROOT}/live/state.json'을 썼다 — KR(KIS, 원화)과 US(Alpaca, 달러)가 물리적으로 분리된 계좌를 각자 운영하는데(Phase4 핵심 결정 4), KR 트랙 세션이 safety.py를 '공유, 재사용'하라는 지시대로 그대로 쓰면 두 트랙의 NAV/현금/포지션이 같은 파일에서 서로 덮어써 재구성 체크가 거의 매번 실패하거나(통화 단위가 다른 숫자를 비교) 킬스위치가 엉뚱한 기준으로 발동하는 상황이 됐을 것. load_state/save_state/load_or_bootstrap_state에 필수 track 파라미터(us/kr) 추가, 파일명을 state_{track}.json으로 분리. decide_us.py/execute_us.py 호출부 수정. (2) daily_pipeline.py::merge_ohlcv_meta()가 공유 산출물 ohlcv_meta.parquet에 to_parquet()으로 직접(비원자적으로) 썼다 — KR/US 둘 다 같은 07:00~08:00 KST cron 창에서 이 함수를 각자 부르므로(plan/10 §B-6), 한쪽이 쓰는 도중 다른 쪽이 읽으면(build_live_features_window) parquet 포맷 특성상 손상된 파일을 만나 그날 decide 사이클이 크래시할 수 있었다. tmp-then-rename 패턴(다른 곳과 동일)으로 수정, 실패 시 tmp 파일 정리. 회귀 테스트 5건 추가(state 격리 2건, atomic write 2건 — 둘 다 수정 전 코드로 재현해 실제로 실패함을 확인 후 복구, merge_ohlcv_meta 관련 기존 테스트명 하나는 더 정확한 이름으로 교체). pytest tests/ -v 325개 전체 통과, leakage-guard 통과. 이 수정 덕분에 KR 트랙 세션이 제안된 프롬프트대로(공유 모듈 그대로 재사용) 진행해도 안전함을 확인."
+    },
+    {
+      "step": "phase4_kr_step1_incremental_collection_fix",
+      "status": "done",
+      "timestamp": "2026-08-20T08:16:19.317053+00:00",
+      "output": "src/data_collection/collect_kr.py::fetch_all_daily_snapshots()에 incremental=True(기본값) 추가 — raw_dir/stock_daily_trade/_last_processed_date.txt에 마지막 처리 날짜를 기록해 다음 호출부터 그 이후만 순회 (fetch_daily_snapshot() 자체는 이미 일자별 캐시 우선이라 새 날짜는 정상 추가됐지만, 이 함수가 매번 시작일~오늘 ~4,000일 전체를 재순회하며 이미 캐시된 옛 parquet까지 매번 다시 열던 낭비를 제거). extract_universe_ohlcv()에도 incremental=True(기본값) 추가 — raw_dir/kr_universe_ohlcv_cache.parquet(+ kr_universe_ohlcv_cache_tickers.txt)에 이전 추출 결과를 캐싱해 마지막 날짜 이후분만 새로 추출+append, 유니버스(티커 집합)가 정기변경 등으로 바뀌면 캐시를 무시하고 전체 재추출(신규 편입 종목의 과거 이력 누락 방지). events_kr.py::fetch_kr_disclosures()에 incremental=True(기본값) 추가 — 캐시가 있으면 그대로 반환하던 구 동작(매일 돌려도 새 공시가 영영 안 붙는 버그, US 트랙의 fetch_us_filings()에서 먼저 발견된 것과 동일 패턴)을 캐시의 마지막 rcept_dt 다음날부터 DART에 재조회해 append+dedup(rcept_no 기준)하도록 수정. force=True는 전체 재수집, incremental=False는 구 동작 재현용(둘 다 fetch_us_filings와 동일한 파라미터 관례). 신규 회귀 테스트 12건(tests/test_collect_kr.py 7건, tests/test_events_kr.py 5건) — 실제 KRX/DART 네트워크 호출 없이 mock 기반, incremental 경로가 캐시 마지막 지점부터만 순회/재조회하는지와 incremental=False/force 경로가 기존 동작을 그대로 재현하는지 확인. pytest tests/ -v 337개 전체 통과, leakage-guard grep(rolling(/center=True/shift(-/.fit() collect_kr.py/events_kr.py 전부 결과 없음) 통과. collect_kr()/collect_events_kr() 호출부는 변경 없음(둘 다 새 파라미터의 기본값 incremental=True를 그대로 씀)."
+    },
+    {
+      "step": "phase4_kr_step1_review_round1",
+      "status": "done",
+      "timestamp": "2026-08-20T08:23:15.376802+00:00",
+      "output": "review-loop 1차 재검토: collect_events.py::collect_events_kr()의 실패 로그 문구가 fetch_kr_disclosures()의 구 동작(실패 시 캐시 없음, 다음 실행에 전체 재시도)을 전제로 쓰여 있었는데, 이번 1단계 수정으로 incremental=True가 기본값이 되면서 실패해도 이전 성공분 캐시가 그대로 남아 다음 실행이 그 지점부터 증분 재시도한다는 점이 반영 안 돼 부정확해짐(실제 동작 오류는 아니고 로그 문구만 수정, US 트랙의 collect_events_us()에도 동일한 문구가 있으나 그건 US 트랙 세션 소관이라 손대지 않음). pytest tests/ -v 337개 전체 통과, leakage-guard grep(rolling(/center=True/shift(-/.fit() 대상 3개 파일 전부 결과 없음) 통과."
+    },
+    {
+      "step": "phase4_kr_step1_review_round2",
+      "status": "done",
+      "timestamp": "2026-08-20T08:26:26.617228+00:00",
+      "output": "review-loop 2차 재검토: extract_universe_ohlcv()의 캐시 조기 반환 경로(cached max date+1 > end_date)가 캐시에 이번 호출의 end_date보다 늦은 날짜까지 이미 들어있는 경우(예: 오늘 실행 후 더 이른 end_date로 재호출) 캐시 전체를 그대로 반환해 end_date 계약을 위반하는 실제 버그 발견 — 구 while 루프는 항상 d<=end_date로 직접 상한을 걸어 이 문제가 없었는데, 캐싱 도입으로 생긴 새 부작용(review-loop 각도: 직전 라운드 자신의 수정). 조기 반환 시 cached[cached[\"date\"]<=end_date]로 필터링하도록 수정(캐시 파일 자체는 잘라내지 않음 — 나중에 더 큰 end_date로 재호출될 때 그대로 재사용). 정상 fetch 경로는 cached_max<extract_start<=end_date 구조상 이미 end_date를 넘는 행이 없어 필터 불필요함을 확인. 재현 회귀 테스트 1건 추가(수정 전 코드로는 실패 확인). pytest tests/ -v 338개 전체 통과, leakage-guard grep 통과."
+    },
+    {
+      "step": "phase4_kr_step1_review_round3",
+      "status": "done",
+      "timestamp": "2026-08-20T08:28:10.182055+00:00",
+      "output": "review-loop 3차 재검토: fetch_all_daily_snapshots()(반환값이 None, 사이드이펙트만이라 end_date 계약 위반 자체가 성립 안 함 재확인)/fetch_kr_disclosures()(end_date가 항상 내부에서 today()로 고정, 파라미터가 아니라 2차에서 발견한 것과 같은 클래스의 계약 위반이 애초에 불가능함)에 2차와 같은 각도(직전 라운드 자신의 수정 부작용)로 유사 버그가 있는지 재확인했으나 없음. 실제 프로덕션 data/raw/kr/(stock_daily_trade 4640개 파일, _last_processed_date.txt 아직 없음)로 마이그레이션 경로(최초 1회는 여전히 전체 순회, 이후부터 증분)도 재확인. 수정 내역 없음."
     }
   ],
-  "next_action": "Phase 4 US 트랙 코드 구현(1~5단계) + 크로스트랙 충돌 수정까지 완료, 커밋 후 원격에 push 예정. KR 트랙 세션은 이제 안전하게 공유 모듈(observation/infer/allocation/safety/notify/broker base)을 재사용할 수 있음(state 파일이 track별로 분리됨, ohlcv_meta.parquet 쓰기가 원자적임). US 6단계(무인 모의투자 운영)는 여전히 사용자 액션 대기 — Alpaca API 키/.env, MATTERMOST_WEBHOOK_URL 설정, cron 설치 필요.",
+  "next_action": "Phase 4 KR 트랙 원자적 순서 2단계 — plan/10 §C-4 2번: observation.py/infer.py/allocation.py는 US 트랙에서 이미 구현된 공유 모듈이라 그대로 재사용(재작성 금지, CLAUDE.md Phase4 DoD 확인). KR 트랙은 3단계(src/live/broker/kis.py, KIS Open API 모의투자 도메인 openapivts.koreainvestment.com:29443, 정수 주식 수량, mode 파라미터로 도메인/앱키만 분기)부터 사용자 승인 받고 착수.",
   "blockers": [
     "Alpaca 모의투자 API 키(.env)가 아직 미설정 — 실제 cron 가동 전 사용자가 발급/설정 필요",
     "MATTERMOST_WEBHOOK_URL(.env)이 아직 미설정 — 알림이 stderr 로그로만 남고 실제 Mattermost에는 전송되지 않음, 사용자가 webhook URL 설정 필요"

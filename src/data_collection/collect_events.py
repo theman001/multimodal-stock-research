@@ -77,7 +77,10 @@ def collect_events_kr(data_root: Path | None = None) -> pd.DataFrame:
             failed_tickers.append((u["ticker"], str(e)))
 
     if failed_tickers:
-        print(f"[collect_events_kr] 수집 실패 {len(failed_tickers)}종목 (스킵, 다음 실행 시 캐시 없어 재시도됨): {failed_tickers}")
+        # fetch_kr_disclosures()가 incremental=True(기본값)로 바뀐 뒤로는 "캐시 없음"이
+        # 아니라 "이전 성공분 캐시가 그대로 남아있고, 다음 실행이 그 지점부터 증분
+        # 재시도"가 정확한 설명이다(최초 실행 실패라 캐시 자체가 없는 종목만 전체 재시도).
+        print(f"[collect_events_kr] 수집 실패 {len(failed_tickers)}종목 (스킵, 다음 실행 시 캐시 지점부터 재시도됨): {failed_tickers}")
     if not rows:
         raise RuntimeError("KR 이벤트 수집 결과가 비어 있음 — 전체 실패")
 

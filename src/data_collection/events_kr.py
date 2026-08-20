@@ -85,12 +85,32 @@ def _parse_list_response(payload: dict, ticker: str, pblntf_ty: str) -> pd.DataF
 
 
 def fetch_kr_disclosures(
-    corp_code: str, ticker: str, raw_dir: Path, start_date: str = START_DATE, force: bool = False
+    corp_code: str,
+    ticker: str,
+    raw_dir: Path,
+    start_date: str = START_DATE,
+    force: bool = False,
+    incremental: bool = True,
 ) -> pd.DataFrame:
-    """corp_code의 주요사항보고+수시공시(TARGET_PBLNTF_TY) 이력을 raw 캐싱한다 (캐시 우선)."""
+    """corp_code의 주요사항보고+수시공시(TARGET_PBLNTF_TY) 이력을 raw 캐싱한다.
+
+    `incremental=True`(기본값)면 캐시가 있어도 캐시의 마지막 `rcept_dt`
+    이후분만 DART에 재조회해 append+dedup한다 — 캐시가 있으면 그대로
+    반환하던 구 동작은 매일 돌려도 새 공시가 영영 안 붙는 버그였다(US 트랙의
+    `fetch_us_filings()`에서 먼저 발견·수정된 것과 동일한 패턴).
+    `force=True`는 캐시를 무시하고 `start_date`부터 전체를 재수집한다.
+    `incremental=False`는 캐시가 있으면 그대로 반환(구 동작, 네트워크 호출
+    없이 재현하고 싶은 경우용) — `force`가 우선한다.
+    """
     cache_path = raw_dir / "events" / f"disclosures_{ticker}.parquet"
-    if cache_path.exists() and not force:
-        return pd.read_parquet(cache_path)
+    cached = pd.read_parquet(cache_path) if cache_path.exists() and not force else None
+
+    if cached is not None and not incremental:
+        return cached
+
+    fetch_start = start_date
+    if cached is not None and not cached.empty:
+        fetch_start = cached["rcept_dt"].max()
 
     api_key = _dart_api_key()
     end_date = pd.Timestamp.today().strftime("%Y%m%d")
@@ -98,7 +118,7 @@ def fetch_kr_disclosures(
     for pblntf_ty in TARGET_PBLNTF_TY:
         page_no = 1
         while True:
-            payload = _fetch_list_page(corp_code, pblntf_ty, start_date, end_date, page_no, api_key)
+            payload = _fetch_list_page(corp_code, pblntf_ty, fetch_start, end_date, page_no, api_key)
             frames.append(_parse_list_response(payload, ticker, pblntf_ty))
             time.sleep(DART_REQUEST_DELAY_SECONDS)
             total_page = payload.get("total_page", 0)
@@ -107,7 +127,12 @@ def fetch_kr_disclosures(
             page_no += 1
 
     frames = [f for f in frames if not f.empty]
-    result = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=_KEEP_COLUMNS)
+    new_result = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=_KEEP_COLUMNS)
+
+    if cached is not None and not cached.empty:
+        result = pd.concat([cached, new_result], ignore_index=True)
+    else:
+        result = new_result
     result = result.drop_duplicates(subset="rcept_no").sort_values("rcept_dt").reset_index(drop=True)
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
