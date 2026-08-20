@@ -15,12 +15,12 @@
 
 **최종 목표는 스스로 매수/매도/보유를 판단하는 AI Agent입니다.** 그 판단의 기반이 되는 신호를 Phase 1~2에서 통계적으로 검증하는 것이 지금 단계의 목적입니다: 단순 가격 예측이 아니라 "시장 분류 × 기업 규모 카테고리에 따라 기술적 지표와 뉴스 이벤트의 통계적 유의성이 어떻게 달라지는가"를 검증하는 리서치 파이프라인입니다. 데이터셋을 케이스별로 쪼개서 각개 학습시키지 않고, 하나의 데이터셋에 `Market_Id`(국내/해외), `Size_Id`(대형/중형/소형) **메타 특성**을 주입해 조건부 연관성을 학습시키는 것이 핵심 사상입니다.
 
-## 전체 로드맵과 현재 스코프: Phase 3 완료, Phase 4 설계 확정 — KR/US 두 세션으로 구현 착수 대기
+## 전체 로드맵과 현재 스코프: Phase 3 완료, Phase 4 US 트랙 코드 구현(1~5단계) 완료 — KR 트랙 및 US 6단계(무인 운영)는 대기 중
 
 - **Phase 1 (완료, 2026-08-12 사용자 승인)**: 차트 중심 조건부 연결 학습 MVP — 데이터 수집, 메타 태그 결합, 누수 없는 시계열 분할/학습, 수수료·슬리피지 반영 백테스팅. 산출물은 "익일 등락 확률" 신호(model_v3). walk-forward CV·하이퍼파라미터 탐색으로 51~53% 방향성 정확도가 기술지표 기반 신호의 현실적 천장임을 확인.
 - **Phase 2 (완료, 2026-08-17)**: 뉴스/이벤트 신호 융합. Definition of Done 전 항목 충족(모듈 1~5). 이벤트/감성 피처를 추가해도 XGBoost 익일 방향성 예측은 노이즈 수준 이상 개선되지 않는다는 결론(`data/reports/phase2_retraining_comparison_report.md`) — model_v3(13피처)를 공식 산출물로 유지. 상세 사양은 `plan/08_phase2_news_events.md` 참고.
 - **Phase 3 (완료, 2026-08-20)**: RL 트레이딩 에이전트. 2026-08-18 전체 검토에서 `panel.py::score_model_v3_probabilities()`가 model_v3에 raw 미스케일 피처를 넣던 **CRITICAL 버그**를 발견(raw vs 올바른 스케일링 입력의 예측 상관계수 0.044)해 수정했고, 그 버그로 학습됐던 구 정책은 폐기했다. 2026-08-19 04:03~14:45(약 10시간42분)에 수정된 코드로 6개 정책(폴드1~5 + 공식 단일분할)을 `resume=False`로 전부 재학습, 이어서 재평가해 **train/eval 입력분포가 일치하는 신뢰 가능한 결과**를 확보했다. 결론: 공식분할 RL 누적수익률 101.03%(분류기 27.09%, Buy&Hold 89.55% 대비 높음)이나, 평균 보유종목수 57.7/120·평균 현금비중 0.45%로 "정교한 타이밍"이 아니라 "항상 널리 분산해 최대 투자 상태 유지"에 가까운 저정교도 전략으로 수렴한 것으로 해석됨 — 절대수익률을 그대로 "학습된 알파"로 보지 않음. 상세는 `data/reports/phase3_rl_backtest_report_v1.md`(해석 유의사항 포함), `data/reports/phase3_reward_clipping_investigation.md`, 설계는 `plan/09_phase3_rl_agent_design.md` 참고.
-- **Phase 4 (설계 확정, 2026-08-20)**: 실시간 운영 루프. `plan/10_phase4_live_operations_design.md`에 상세 설계 확정. 코드 구현은 KR(KIS)/US(Alpaca) 두 개의 독립 세션으로 병렬 진행 — 상세는 아래 "Phase 4 구체 사양" 참고
+- **Phase 4 (설계 확정 2026-08-20, US 트랙 코드 구현 완료 2026-08-20)**: 실시간 운영 루프. `plan/10_phase4_live_operations_design.md`에 상세 설계 확정. 코드 구현은 KR(KIS)/US(Alpaca) 두 개의 독립 세션으로 병렬 진행 — US 트랙은 공유 기반(observation/infer/allocation/safety/notify/broker base) + `broker/alpaca.py` + `decide_us.py`/`execute_us.py` 전부 구현·review-loop 검증·테스트 통과 완료(cron 미설치, Alpaca 키·Mattermost webhook 설정 대기 — 무인 운영은 별도 사용자 승인 필요). KR 트랙은 별도 세션 담당, 아직 착수 여부 불명. 상세는 아래 "Phase 4 구체 사양"과 "Phase 4 Definition of Done" 참고
 
 각 Phase는 이전 Phase의 Definition of Done을 충족하고 사용자가 명시적으로 승인해야 다음으로 진행한다. Phase 3는 설계 확정(2026-08-17 "Phase3는 구체적인 계획을 먼저 세우자") 이후, 원자적 모듈(panel/obs_scaler → trading_env → 학습 파이프라인+실학습 → 평가) 각각을 사용자가 "진행해"로 승인하며 완료했다 — 이 방식이 실제 구현 승인 절차였다. Phase 4는 코드나 상세 설계를 아직 미리 만들지 않는다 — 스코프 확장은 반드시 사용자 지시로만 시작한다.
 
@@ -259,14 +259,14 @@ SB3의 `VecNormalize`는 기본적으로 온라인으로 통계를 갱신하는�
 
 ## Phase 4 Definition of Done (KR/US 트랙별로 별도 체크, 공유 기반 항목은 1회만)
 
-- [ ] `src/live/observation.py`가 배치 경로(`src/rl/panel.py::build_grid`)와 수치 일치 (공유, 1회만)
-- [ ] `src/live/infer.py` + `src/live/allocation.py`가 `TradingEnv` 배분 로직과 일치 (공유, 1회만)
-- [ ] 데이터 증분 수집 버그 수정 + 회귀 테스트(해당 트랙의 시장: KR은 `collect_kr.py`/`events_kr.py`, US는 `ohlcv.py`/`events_us.py`)
-- [ ] 브로커 어댑터(`kis.py` 또는 `alpaca.py`, 모의투자 도메인) mock 기반 유닛테스트 통과
-- [ ] `src/live/safety.py`가 실제로 주문을 차단하는 테스트 통과
-- [ ] `decide_*.py`/`execute_*.py` cron 등록, 최소 N영업일(사용자와 재합의 필요) 무인 모의투자 운영, 크래시 0건
-- [ ] 일일 리포트(결정/체결/실현손익 vs 시뮬레이션 가정 비교) 축적, 실거래 전환은 이 DoD 충족과 무관하게 별도 명시적 승인
-- [ ] `progress_log.json` 갱신
+- [x] `src/live/observation.py`가 배치 경로(`src/rl/panel.py::build_grid`)와 수치 일치 (공유, 1회만) — US 트랙 세션에서 구현 완료(2026-08-20). `tests/test_live_observation.py`로 검증, review-loop 다수 라운드로 NaN/Inf·부호·마스킹 처리 버그 수정. KR 트랙이 그대로 재사용할 것(재작성 금지)
+- [x] `src/live/infer.py` + `src/live/allocation.py`가 `TradingEnv` 배분 로직과 일치 (공유, 1회만) — US 트랙 세션에서 구현 완료(2026-08-20), `tests/test_live_infer.py`/`tests/test_live_allocation.py`로 검증. KR 트랙이 그대로 재사용할 것(재작성 금지)
+- [x] 데이터 증분 수집 버그 수정 + 회귀 테스트(해당 트랙의 시장: KR은 `collect_kr.py`/`events_kr.py`, US는 `ohlcv.py`/`events_us.py`) — **US만 완료**(2026-08-20, `fetch_us_ohlcv`/`fetch_us_filings`). KR은 별도 트랙 세션 담당
+- [x] 브로커 어댑터(`kis.py` 또는 `alpaca.py`, 모의투자 도메인) mock 기반 유닛테스트 통과 — **US(`alpaca.py`)만 완료**(2026-08-20). KR(`kis.py`)은 별도 트랙 세션 담당
+- [x] `src/live/safety.py`가 실제로 주문을 차단하는 테스트 통과 — US 트랙에서 구현+검증 완료(2026-08-20, `tests/test_live_safety.py`). safety.py 자체는 공유 모듈이라 KR도 그대로 재사용
+- [ ] `decide_*.py`/`execute_*.py` cron 등록, 최소 N영업일(사용자와 재합의 필요) 무인 모의투자 운영, 크래시 0건 — US 트랙은 `decide_us.py`/`execute_us.py`/`notify.py` 코드 구현+테스트까지 완료(2026-08-20)했으나, 실제 cron 등록·무인 운영은 아직 미착수(Alpaca API 키/.env, MATTERMOST_WEBHOOK_URL 설정이 선행 필요 — 사용자 액션 대기 중). KR은 미착수
+- [ ] 일일 리포트(결정/체결/실현손익 vs 시뮬레이션 가정 비교) 축적, 실거래 전환은 이 DoD 충족과 무관하게 별도 명시적 승인 — 무인 운영이 시작돼야 축적 가능, 아직 미착수
+- [x] `progress_log.json` 갱신 — 매 원자적 단계·review-loop 라운드마다 갱신 중
 
 ## 관련 스킬
 
