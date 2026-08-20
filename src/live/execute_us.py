@@ -29,6 +29,7 @@ from src.live.allocation import TargetOrder
 from src.live.broker.alpaca import AlpacaBroker
 from src.live.broker.base import BrokerAdapter, OrderResult
 from src.live.decide_us import MARKET_ID_US, decision_path
+from src.live.notify import send_notification
 from src.live.safety import LiveState, acquire_run_lock, enforce_order_caps, load_or_bootstrap_state, save_state
 
 
@@ -82,63 +83,82 @@ def run_execute(
             "활성화한다(CLAUDE.md Phase 4 핵심 결정 1번)."
         )
 
-    with acquire_run_lock(data_root, "execute_us"):
-        if not broker.is_market_open():
-            return []  # 아직 장이 안 열림 — 넓은 cron 윈도우 전제, 조용히 종료
+    # 시장이 닫혀 있거나(넓은 폴링 윈도우 중 대부분) 오늘 이미 체결이 끝난
+    # 경우는 10분마다 조용히 반복되는 정상 상태라 매번 알리면 스팸이 된다 —
+    # 그래서 executed=True는 실제로 체결 사이클을 밟기 시작한 뒤에만 세팅하고,
+    # 아래 완료 알림은 executed일 때만 보낸다(예외는 어느 단계에서 나든 항상
+    # 알림 — except 블록 참고).
+    executed = False
+    results: list[OrderResult] = []
+    try:
+        with acquire_run_lock(data_root, "execute_us"):
+            if not broker.is_market_open():
+                return []  # 아직 장이 안 열림 — 넓은 cron 윈도우 전제, 조용히 종료
 
-        state = load_or_bootstrap_state(data_root, broker.get_positions(), broker.get_cash(), broker.get_nav())
-        if state.last_executed_date == str(target_date.date()):
-            # 넓은 폴링 윈도우 안에서 이미 오늘(KST) 체결이 끝났다 — 그대로
-            # 다시 제출하면 주문이 중복된다(모듈 docstring 참고). state.updated_at은
-            # load_or_bootstrap_state()의 최초 부트스트랩에서도 "지금"으로 찍히므로
-            # 이 판단에 쓰면 안 된다(safety.py의 LiveState.last_executed_date
-            # docstring 참고 — 실제로 그렇게 짰다가 그날의 첫 실행을 건너뛰는
-            # 버그를 냈었음).
-            return []
+            state = load_or_bootstrap_state(data_root, broker.get_positions(), broker.get_cash(), broker.get_nav())
+            if state.last_executed_date == str(target_date.date()):
+                # 넓은 폴링 윈도우 안에서 이미 오늘(KST) 체결이 끝났다 — 그대로
+                # 다시 제출하면 주문이 중복된다(모듈 docstring 참고). state.updated_at은
+                # load_or_bootstrap_state()의 최초 부트스트랩에서도 "지금"으로 찍히므로
+                # 이 판단에 쓰면 안 된다(safety.py의 LiveState.last_executed_date
+                # docstring 참고 — 실제로 그렇게 짰다가 그날의 첫 실행을 건너뛰는
+                # 버그를 냈었음).
+                return []
 
-        current_positions = broker.get_positions()
-        current_cash = broker.get_cash()
-        nav = broker.get_nav()
-        from src.live.safety import check_reconciliation
+            executed = True
+            current_positions = broker.get_positions()
+            current_cash = broker.get_cash()
+            nav = broker.get_nav()
+            from src.live.safety import check_reconciliation
 
-        # decide_us.py가 그날 아침 이미 한 번 확인했지만, 결정 시각과 체결
-        # 시각 사이(최대 16시간 이상)에 수동 개입 등으로 상태가 또 바뀌었을
-        # 수 있다 — 실제로 돈이 움직이기 직전이므로 한 번 더 확인한다.
-        check_reconciliation(current_positions, current_cash, state)
+            # decide_us.py가 그날 아침 이미 한 번 확인했지만, 결정 시각과 체결
+            # 시각 사이(최대 16시간 이상)에 수동 개입 등으로 상태가 또 바뀌었을
+            # 수 있다 — 실제로 돈이 움직이기 직전이므로 한 번 더 확인한다.
+            check_reconciliation(current_positions, current_cash, state)
 
-        orders = _load_us_orders(decision_path(data_root, target_date))
-        safe_orders = enforce_order_caps(orders, nav=nav)
+            orders = _load_us_orders(decision_path(data_root, target_date))
+            safe_orders = enforce_order_caps(orders, nav=nav)
 
-        results: list[OrderResult] = []
-        for order in safe_orders:
-            if order.side == "sell":
-                pos = current_positions.get(order.ticker)
-                if pos is None or pos.qty == 0:
-                    continue  # 이미 청산됐거나 애초에 없음(재구성 통과했으니 정상 범위)
-                # allocation.py가 숏 포지션의 SELL은 이미 no-op으로 걸러내므로
-                # (경고만 남김) 여기 도달하는 건 전부 롱 청산이다 — qty>0.
-                result = broker.place_market_order(order.ticker, "sell", qty=pos.qty)
-            else:
-                result = broker.place_market_order(order.ticker, "buy", notional=order.notional)
-            results.append(result)
+            for order in safe_orders:
+                if order.side == "sell":
+                    pos = current_positions.get(order.ticker)
+                    if pos is None or pos.qty == 0:
+                        continue  # 이미 청산됐거나 애초에 없음(재구성 통과했으니 정상 범위)
+                    # allocation.py가 숏 포지션의 SELL은 이미 no-op으로 걸러내므로
+                    # (경고만 남김) 여기 도달하는 건 전부 롱 청산이다 — qty>0.
+                    result = broker.place_market_order(order.ticker, "sell", qty=pos.qty)
+                else:
+                    result = broker.place_market_order(order.ticker, "buy", notional=order.notional)
+                results.append(result)
 
-        final_positions = broker.get_positions()
-        final_cash = broker.get_cash()
-        final_nav = broker.get_nav()
-        save_state(
-            data_root,
-            LiveState(
-                positions=final_positions,
-                cash=final_cash,
-                nav=final_nav,
-                nav_anchor=state.nav_anchor,  # 배포 시점 기준선은 절대 다시 계산하지 않음
-                updated_at=datetime.now(timezone.utc).isoformat(),
-                # 실제 제출한 주문이 0건(전부 no-op)이어도 "오늘 체결 사이클을
-                # 완료했다"는 사실 자체는 기록한다 — 그래야 같은 날 나머지
-                # 폴링에서 반복적으로 재구성 체크/락 경합을 하지 않는다.
-                last_executed_date=str(target_date.date()),
-            ),
-        )
+            final_positions = broker.get_positions()
+            final_cash = broker.get_cash()
+            final_nav = broker.get_nav()
+            save_state(
+                data_root,
+                LiveState(
+                    positions=final_positions,
+                    cash=final_cash,
+                    nav=final_nav,
+                    nav_anchor=state.nav_anchor,  # 배포 시점 기준선은 절대 다시 계산하지 않음
+                    updated_at=datetime.now(timezone.utc).isoformat(),
+                    # 실제 제출한 주문이 0건(전부 no-op)이어도 "오늘 체결 사이클을
+                    # 완료했다"는 사실 자체는 기록한다 — 그래야 같은 날 나머지
+                    # 폴링에서 반복적으로 재구성 체크/락 경합을 하지 않는다.
+                    last_executed_date=str(target_date.date()),
+                ),
+            )
+    except Exception as e:
+        # 락은 이미 해제된 뒤다(acquire_run_lock의 finally가 with 블록을 빠져나가며
+        # 먼저 실행됨). 재구성 불일치를 포함한 모든 실패 경로가 여기로 모인다
+        # (plan/10 §B-5: "재구성 불일치하면... 알림 후 중단").
+        send_notification(f"[US] execute_us 실패({target_date.date()}): {e!r}", level="error")
+        raise
+
+    if executed:
+        n_buy = sum(1 for r in results if r.side == "buy")
+        n_sell = sum(1 for r in results if r.side == "sell")
+        send_notification(f"[US] execute 완료({target_date.date()}): 매수 {n_buy}건/매도 {n_sell}건 체결", level="info")
 
     return results
 

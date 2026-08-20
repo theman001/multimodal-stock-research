@@ -409,10 +409,29 @@
       "status": "done",
       "timestamp": "2026-08-20T06:47:42.428274+00:00",
       "output": "5차 재검토(review-loop): daily_pipeline.py의 실제 수치 불일치 버그 1건 발견·수정 — _compute_live_rows()가 이벤트 피처(event_count_5d/event_sentiment_mean5d)를 계산할 때 row_dates로 target_date 단 하루짜리 배열만 넘기고 있었음. _compute_features_for_ticker()의 '5거래일' 윈도우는 달력일이 아니라 row_dates 배열 안에서 idx-4번째 원소(그 종목의 최근 5개 거래일 row)로 정의되는데(배치 경로 build_event_features()는 그 종목의 전체 날짜 grid를 넘겨 정상 동작), row_dates가 1개짜리면 idx-4가 0으로 clamp되어 window_start==target_date 자기 자신이 되어버려 최근 1~4거래일 사이에 발생한 이벤트가 event_count_5d/event_sentiment_mean5d에서 통째로 빠짐 — 실측으로 재현 확인(batch event_count_5d=1 vs live=0, 같은 입력). Phase4 DoD 1번 'observation.py가 배치 경로와 수치 일치'를 이벤트 피처 채널에서 위반하는 실제 버그. 수정: 티커별로 실제 최근 거래일(target_date까지, ohlcv_meta에서 조회)을 row_dates로 넘기도록 변경해 배치와 동일한 윈도우 정의를 재현. 회귀 테스트 1건 추가(target_date 2거래일 전 이벤트가 event_count_5d/event_sentiment_mean5d에 반영되는지 검증 — 수정 전 코드로는 실패함을 확인). pytest tests/ -v 308개 전체 통과, leakage-guard grep(rolling(/center=True/shift(-/.fit() src/live/ 전부 결과 없음) 통과."
+    },
+    {
+      "step": "phase4_us_step5_notify",
+      "status": "done",
+      "timestamp": "2026-08-20T07:41:41.814738+00:00",
+      "output": "Step 5: src/live/notify.py 구현(Mattermost webhook, MATTERMOST_WEBHOOK_URL을 .env로 관리, requests.post 직접 호출, 신규 의존성 없음). send_notification()은 어떤 경우에도(webhook 미설정/네트워크 오류/Mattermost 에러 응답) 예외를 던지지 않고 False만 반환 — 알림 실패가 무인 매매 사이클을 막으면 안 되기 때문. decide_us.py/execute_us.py에 실제로 연결: (1) 킬스위치 발동 시 warning 알림(plan/10 §B-5 명시 요구사항), (2) 재구성 불일치를 포함한 모든 예외 발생 시 error 알림 후 재발생(plan/10 §B-5 '재구성 불일치하면... 알림 후 중단'), (3) 정상 완료 시 info 알림(매수/매도 건수 요약). execute_us.py는 시장마감/이미체결완료 같은 정상적인 폴링 no-op에는 알림을 보내지 않도록 executed 플래그로 구분(10분 간격 폴링에서 스팸 방지). 테스트 12건 추가(notify.py 자체 5건 + decide_us.py 통합 3건 + execute_us.py 통합 3건)."
+    },
+    {
+      "step": "phase4_us_step5_review_round1",
+      "status": "done",
+      "timestamp": "2026-08-20T07:41:41.814763+00:00",
+      "output": "1차 재검토(review-loop): 테스트 격리 취약점 1건 발견·수정 — decide_us.py/execute_us.py의 예외 경로 테스트 다수(재구성 불일치, 락 경합 등)가 notify.py::send_notification을 monkeypatch하지 않고 그대로 통과시키는데, 이 함수는 MATTERMOST_WEBHOOK_URL이 설정돼 있으면 실제로 requests.post()를 호출한다 — 개발자 셸/CI에 그 값이 이 프로젝트와 무관한 이유로 이미 설정돼 있으면(예: 다른 프로젝트용 공용 webhook) 테스트 실행 중 실제 Mattermost 채널로 알림이 새나갈 수 있었음. 이 저장소의 확립된 테스트 원칙('실제 네트워크 호출 없음')을 위반하는 실제 허점. tests/conftest.py를 신설해 모든 테스트에서 MATTERMOST_WEBHOOK_URL을 자동으로 지우는 autouse fixture 추가. 회귀 테스트 2건 추가(세션 스코프에서 셸 export를 흉내내 함수 스코프 fixture가 매 테스트마다 다시 지우는지 검증) — fixture를 일시 제거하고 재현해 실제로 실패함을 확인한 뒤 복구. pytest tests/ -v 321개 전체 통과, leakage-guard 통과."
+    },
+    {
+      "step": "phase4_us_step5_review_round2",
+      "status": "done",
+      "timestamp": "2026-08-20T07:41:41.814766+00:00",
+      "output": "2차 재검토(review-loop): 수정 내역 없음. notify.py 전체와 decide_us.py/execute_us.py의 알림 통합 지점(이중 알림 가능성, executed 플래그 타이밍, send_notification 자체가 예외를 던질 경우 원본 예외가 가려질 위험, 10초 타임아웃이 10분 폴링 주기에 미치는 영향, 알림 문구에 포함되는 NAV/현금 수치의 민감도)를 다시 훑었지만 새로 발견된 실패 시나리오는 없었음."
     }
   ],
-  "next_action": "Phase 4 US 트랙 4단계 review-loop 6차 재검토 진행 -> 수정 내역 없을 때까지 반복 -> 통과 후 커밋 -> cron 실제 설치 여부/Alpaca 키 설정은 별도 사용자 확인 -> 5단계(notify.py) 진행",
+  "next_action": "Phase 4 US 트랙 Step 5(notify.py) review-loop 2차에서 클린 — 커밋 여부 사용자 확인 대기. 이후 6단계(일정 기간 무인 모의투자 운영)는 이 세션이 결정하지 않음(별도 재승인 필요) — Alpaca 모의투자 API 키/.env, MATTERMOST_WEBHOOK_URL 설정, cron 실제 설치는 모두 사용자 액션 필요.",
   "blockers": [
-    "Alpaca 모의투자 API 키(.env)가 아직 미설정 — 실제 cron 가동 전 사용자가 발급/설정 필요"
+    "Alpaca 모의투자 API 키(.env)가 아직 미설정 — 실제 cron 가동 전 사용자가 발급/설정 필요",
+    "MATTERMOST_WEBHOOK_URL(.env)이 아직 미설정 — 알림이 stderr 로그로만 남고 실제 Mattermost에는 전송되지 않음, 사용자가 webhook URL 설정 필요"
   ]
 }

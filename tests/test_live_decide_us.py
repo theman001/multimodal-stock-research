@@ -246,6 +246,87 @@ def test_run_decide_suppresses_buys_when_kill_switch_triggers(data_root):
     assert all(o["side"] != "buy" for o in payload["orders"])
 
 
+def test_run_decide_sends_warning_notification_when_kill_switch_triggers(data_root):
+    """plan/10 §B-5: 킬스위치 발동은 명시적으로 알림이 요구되는 지점이다."""
+    from src.live.safety import LiveState, save_state
+
+    ohlcv = pd.read_parquet(data_root / "processed" / "ohlcv_meta_us.parquet")
+    target_date = ohlcv["date"].max()
+
+    save_state(data_root, LiveState(positions={}, cash=1000.0, nav=2000.0, nav_anchor=2000.0, updated_at="2024-01-01"))
+    broker = _FakeBroker(positions={}, cash=1000.0, nav=1000.0)
+
+    calls = []
+    original = decide_us_module.send_notification
+
+    def _capture(text, level="info"):
+        calls.append((text, level))
+        return True
+
+    decide_us_module.send_notification = _capture
+    try:
+        run_decide(data_root=data_root, target_date=target_date, broker=broker)
+    finally:
+        decide_us_module.send_notification = original
+
+    levels = [level for _text, level in calls]
+    assert "warning" in levels
+    assert any("킬스위치" in text for text, _level in calls)
+
+
+def test_run_decide_sends_error_notification_on_reconciliation_failure_and_still_raises(data_root):
+    from src.live.safety import LiveState, save_state
+
+    ohlcv = pd.read_parquet(data_root / "processed" / "ohlcv_meta_us.parquet")
+    target_date = ohlcv["date"].max()
+
+    save_state(data_root, LiveState(positions={}, cash=1000.0, nav=1000.0, nav_anchor=1000.0, updated_at="2024-01-01"))
+    broker = _FakeBroker(positions={}, cash=100.0, nav=100.0)  # 큰 괴리 -> 재구성 실패
+
+    calls = []
+    original = decide_us_module.send_notification
+
+    def _capture(text, level="info"):
+        calls.append((text, level))
+        return True
+
+    decide_us_module.send_notification = _capture
+    try:
+        with pytest.raises(RuntimeError, match="재구성 불일치"):
+            run_decide(data_root=data_root, target_date=target_date, broker=broker)
+    finally:
+        decide_us_module.send_notification = original
+
+    assert len(calls) == 1
+    text, level = calls[0]
+    assert level == "error"
+    assert "decide_us 실패" in text
+
+
+def test_run_decide_sends_info_notification_on_success(data_root):
+    broker = _FakeBroker(positions={}, cash=1000.0, nav=1000.0)
+    ohlcv = pd.read_parquet(data_root / "processed" / "ohlcv_meta_us.parquet")
+    target_date = ohlcv["date"].max()
+
+    calls = []
+    original = decide_us_module.send_notification
+
+    def _capture(text, level="info"):
+        calls.append((text, level))
+        return True
+
+    decide_us_module.send_notification = _capture
+    try:
+        run_decide(data_root=data_root, target_date=target_date, broker=broker)
+    finally:
+        decide_us_module.send_notification = original
+
+    assert len(calls) == 1
+    text, level = calls[0]
+    assert level == "info"
+    assert "decide 완료" in text
+
+
 def test_run_decide_second_call_same_day_blocked_by_lock_if_concurrent(data_root):
     """중복 실행 방지 락이 실제로 걸리는지 — acquire_run_lock을 직접 잡아둔
     상태에서 run_decide를 부르면 막혀야 한다."""

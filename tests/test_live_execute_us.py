@@ -3,6 +3,7 @@ import json
 
 import pytest
 
+import src.live.execute_us as execute_us_module
 from src.live.broker.base import BrokerAdapter, OrderResult
 from src.live.decide_us import decision_path
 from src.live.execute_us import run_execute
@@ -226,6 +227,62 @@ def test_run_execute_blocked_by_concurrent_lock(tmp_path):
     with acquire_run_lock(tmp_path, "execute_us"):
         with pytest.raises(RuntimeError, match="이미 진행 중"):
             run_execute(mode="paper", data_root=tmp_path, target_date=TARGET_DATE, broker=broker)
+
+
+def test_run_execute_sends_no_notification_on_routine_no_op_polls(tmp_path):
+    """넓은 폴링 윈도우 안에서 시장이 닫혀 있거나 이미 오늘 체결이 끝난
+    경우는 10분마다 반복되는 정상 상태다 — 매번 알리면 스팸이 되므로 알림을
+    보내면 안 된다."""
+    calls = []
+    original = execute_us_module.send_notification
+    execute_us_module.send_notification = lambda text, level="info": calls.append((text, level)) or True
+    try:
+        _write_decision(tmp_path, TARGET_DATE, [{"ticker": "AAPL", "side": "buy", "notional": 40.0, "market_id": 0}])
+        broker = _FakeBroker(market_open=False)
+        run_execute(mode="paper", data_root=tmp_path, target_date=TARGET_DATE, broker=broker)
+    finally:
+        execute_us_module.send_notification = original
+
+    assert calls == []
+
+
+def test_run_execute_sends_info_notification_after_actually_executing(tmp_path):
+    save_state(tmp_path, LiveState(positions={}, cash=1000.0, nav=1000.0, nav_anchor=1000.0, updated_at="2024-01-01"))
+    _write_decision(tmp_path, TARGET_DATE, [{"ticker": "AAPL", "side": "buy", "notional": 40.0, "market_id": 0}])
+    broker = _FakeBroker(positions={}, cash=1000.0, nav=1000.0)
+
+    calls = []
+    original = execute_us_module.send_notification
+    execute_us_module.send_notification = lambda text, level="info": calls.append((text, level)) or True
+    try:
+        run_execute(mode="paper", data_root=tmp_path, target_date=TARGET_DATE, broker=broker)
+    finally:
+        execute_us_module.send_notification = original
+
+    assert len(calls) == 1
+    text, level = calls[0]
+    assert level == "info"
+    assert "execute 완료" in text
+
+
+def test_run_execute_sends_error_notification_on_reconciliation_failure_and_still_raises(tmp_path):
+    save_state(tmp_path, LiveState(positions={}, cash=1000.0, nav=1000.0, nav_anchor=1000.0, updated_at="2024-01-01"))
+    _write_decision(tmp_path, TARGET_DATE, [{"ticker": "AAPL", "side": "buy", "notional": 40.0, "market_id": 0}])
+    broker = _FakeBroker(positions={}, cash=100.0, nav=100.0)  # 큰 괴리 -> 재구성 실패
+
+    calls = []
+    original = execute_us_module.send_notification
+    execute_us_module.send_notification = lambda text, level="info": calls.append((text, level)) or True
+    try:
+        with pytest.raises(RuntimeError, match="재구성 불일치"):
+            run_execute(mode="paper", data_root=tmp_path, target_date=TARGET_DATE, broker=broker)
+    finally:
+        execute_us_module.send_notification = original
+
+    assert len(calls) == 1
+    text, level = calls[0]
+    assert level == "error"
+    assert "execute_us 실패" in text
 
 
 def test_run_execute_respects_order_cap_even_if_decision_file_is_stale(tmp_path):

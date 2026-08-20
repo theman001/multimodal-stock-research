@@ -32,6 +32,7 @@ from src.live.broker.alpaca import AlpacaBroker
 from src.live.broker.base import BrokerAdapter
 from src.live.daily_pipeline import build_live_features_window, merge_ohlcv_meta
 from src.live.infer import predict_action
+from src.live.notify import send_notification
 from src.live.observation import build_today_observation
 from src.live.safety import (
     acquire_run_lock,
@@ -80,81 +81,103 @@ def run_decide(
     target_date = pd.Timestamp(target_date) if target_date is not None else _kst_today()
     broker = broker or AlpacaBroker(mode="paper")
 
-    with acquire_run_lock(data_root, "decide_us"):
-        current_positions = broker.get_positions()
-        current_cash = broker.get_cash()
-        current_nav_from_broker = broker.get_nav()
+    try:
+        with acquire_run_lock(data_root, "decide_us"):
+            current_positions = broker.get_positions()
+            current_cash = broker.get_cash()
+            current_nav_from_broker = broker.get_nav()
 
-        state = load_or_bootstrap_state(data_root, current_positions, current_cash, current_nav_from_broker)
-        check_reconciliation(current_positions, current_cash, state)
+            state = load_or_bootstrap_state(data_root, current_positions, current_cash, current_nav_from_broker)
+            check_reconciliation(current_positions, current_cash, state)
 
-        collect_us(data_root)
-        merge_ohlcv_meta(data_root)
-        collect_events_us(data_root)
-        score_events_us(data_root)
+            collect_us(data_root)
+            merge_ohlcv_meta(data_root)
+            collect_events_us(data_root)
+            score_events_us(data_root)
 
-        features_override = build_live_features_window(
-            data_root,
-            target_date=target_date,
-            lookback_days=LOOKBACK_DAYS,
-            market_id=MARKET_ID_US,
-            include_event_features=INCLUDE_EVENT_FEATURES,
-        )
+            features_override = build_live_features_window(
+                data_root,
+                target_date=target_date,
+                lookback_days=LOOKBACK_DAYS,
+                market_id=MARKET_ID_US,
+                include_event_features=INCLUDE_EVENT_FEATURES,
+            )
 
-        obs_result = build_today_observation(
-            data_root=data_root,
-            checkpoints_dir=checkpoints_dir,
-            checkpoint_name=CHECKPOINT_NAME,
-            target_date=target_date,
-            broker_positions=current_positions,
-            broker_cash=current_cash,
-            nav_anchor=state.nav_anchor,
-            include_event_features=INCLUDE_EVENT_FEATURES,
-            lookback_days=LOOKBACK_DAYS,
-            features_df_override=features_override,
-        )
+            obs_result = build_today_observation(
+                data_root=data_root,
+                checkpoints_dir=checkpoints_dir,
+                checkpoint_name=CHECKPOINT_NAME,
+                target_date=target_date,
+                broker_positions=current_positions,
+                broker_cash=current_cash,
+                nav_anchor=state.nav_anchor,
+                include_event_features=INCLUDE_EVENT_FEATURES,
+                lookback_days=LOOKBACK_DAYS,
+                features_df_override=features_override,
+            )
 
-        action = predict_action(checkpoints_dir, CHECKPOINT_NAME, obs_result.obs, INCLUDE_EVENT_FEATURES)
+            action = predict_action(checkpoints_dir, CHECKPOINT_NAME, obs_result.obs, INCLUDE_EVENT_FEATURES)
 
-        suppress_buys = check_daily_loss_kill_switch(obs_result.nav, state.nav)
+            suppress_buys = check_daily_loss_kill_switch(obs_result.nav, state.nav)
+            if suppress_buys:
+                # plan/10 §B-5: "일일 손실 한도(kill switch): ... 그날 신규 BUY 중단
+                # 알림" — 명시적으로 알림이 요구되는 지점이다(재구성 불일치는
+                # check_reconciliation()이 예외를 던지므로 아래 except 블록에서
+                # 공통으로 알림 처리됨).
+                send_notification(
+                    f"[US] 일일 손실 킬스위치 발동 — 오늘 신규 BUY 중단 "
+                    f"(NAV {obs_result.nav:,.2f}, 기준 {state.nav:,.2f})",
+                    level="warning",
+                )
 
-        current_holdings = {t for t, p in current_positions.items() if p.qty != 0}
-        position_values = {
-            t: float(v) for t, v in zip(obs_result.tickers, obs_result.position_value) if v != 0
-        }
-        orders = compute_target_allocations(
-            action=action,
-            tickers=obs_result.tickers,
-            current_holdings=current_holdings,
-            position_values=position_values,
-            cash=obs_result.cash,
-            nav=obs_result.nav,
-            valid_mask=obs_result.valid_mask,
-            has_price=obs_result.has_price,
-        )
-        if suppress_buys:
-            orders = [o for o in orders if o.side != "buy"]
-        orders = enforce_order_caps(orders, nav=obs_result.nav)
+            current_holdings = {t for t, p in current_positions.items() if p.qty != 0}
+            position_values = {
+                t: float(v) for t, v in zip(obs_result.tickers, obs_result.position_value) if v != 0
+            }
+            orders = compute_target_allocations(
+                action=action,
+                tickers=obs_result.tickers,
+                current_holdings=current_holdings,
+                position_values=position_values,
+                cash=obs_result.cash,
+                nav=obs_result.nav,
+                valid_mask=obs_result.valid_mask,
+                has_price=obs_result.has_price,
+            )
+            if suppress_buys:
+                orders = [o for o in orders if o.side != "buy"]
+            orders = enforce_order_caps(orders, nav=obs_result.nav)
 
-        market_id_by_ticker = dict(zip(obs_result.tickers, obs_result.market_id))
-        payload = {
-            "target_date": str(target_date.date()),
-            "decided_at": pd.Timestamp.now(tz="Asia/Seoul").isoformat(),
-            "nav": obs_result.nav,
-            "cash": obs_result.cash,
-            "suppress_buys": suppress_buys,
-            "orders": [
-                {
-                    "ticker": o.ticker,
-                    "side": o.side,
-                    "notional": o.notional,
-                    "market_id": int(market_id_by_ticker[o.ticker]),
-                }
-                for o in orders
-            ],
-        }
-        path = decision_path(data_root, target_date)
-        _save_json_atomic(path, payload)
+            market_id_by_ticker = dict(zip(obs_result.tickers, obs_result.market_id))
+            payload = {
+                "target_date": str(target_date.date()),
+                "decided_at": pd.Timestamp.now(tz="Asia/Seoul").isoformat(),
+                "nav": obs_result.nav,
+                "cash": obs_result.cash,
+                "suppress_buys": suppress_buys,
+                "orders": [
+                    {
+                        "ticker": o.ticker,
+                        "side": o.side,
+                        "notional": o.notional,
+                        "market_id": int(market_id_by_ticker[o.ticker]),
+                    }
+                    for o in orders
+                ],
+            }
+            path = decision_path(data_root, target_date)
+            _save_json_atomic(path, payload)
+    except Exception as e:
+        # 락은 이미 해제된 뒤다(acquire_run_lock의 finally가 with 블록을 빠져나가며
+        # 먼저 실행됨) — 알림 전송이 느려도 다음 실행을 막지 않는다. 재구성
+        # 불일치(check_reconciliation)를 포함한 모든 실패 경로가 여기로 모인다
+        # (plan/10 §B-5: "재구성 불일치하면... 알림 후 중단").
+        send_notification(f"[US] decide_us 실패({target_date.date()}): {e!r}", level="error")
+        raise
+
+    n_buy = sum(1 for o in orders if o.side == "buy")
+    n_sell = sum(1 for o in orders if o.side == "sell")
+    send_notification(f"[US] decide 완료({target_date.date()}): 매수 {n_buy}건/매도 {n_sell}건 저장", level="info")
 
     return path
 
