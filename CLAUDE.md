@@ -15,12 +15,12 @@
 
 **최종 목표는 스스로 매수/매도/보유를 판단하는 AI Agent입니다.** 그 판단의 기반이 되는 신호를 Phase 1~2에서 통계적으로 검증하는 것이 지금 단계의 목적입니다: 단순 가격 예측이 아니라 "시장 분류 × 기업 규모 카테고리에 따라 기술적 지표와 뉴스 이벤트의 통계적 유의성이 어떻게 달라지는가"를 검증하는 리서치 파이프라인입니다. 데이터셋을 케이스별로 쪼개서 각개 학습시키지 않고, 하나의 데이터셋에 `Market_Id`(국내/해외), `Size_Id`(대형/중형/소형) **메타 특성**을 주입해 조건부 연관성을 학습시키는 것이 핵심 사상입니다.
 
-## 전체 로드맵과 현재 스코프: Phase 3 완료(재학습·재평가까지 반영, 신뢰 가능한 결과), Phase 4 착수 여부 사용자 결정 대기
+## 전체 로드맵과 현재 스코프: Phase 3 완료, Phase 4 설계 확정 — KR/US 두 세션으로 구현 착수 대기
 
 - **Phase 1 (완료, 2026-08-12 사용자 승인)**: 차트 중심 조건부 연결 학습 MVP — 데이터 수집, 메타 태그 결합, 누수 없는 시계열 분할/학습, 수수료·슬리피지 반영 백테스팅. 산출물은 "익일 등락 확률" 신호(model_v3). walk-forward CV·하이퍼파라미터 탐색으로 51~53% 방향성 정확도가 기술지표 기반 신호의 현실적 천장임을 확인.
 - **Phase 2 (완료, 2026-08-17)**: 뉴스/이벤트 신호 융합. Definition of Done 전 항목 충족(모듈 1~5). 이벤트/감성 피처를 추가해도 XGBoost 익일 방향성 예측은 노이즈 수준 이상 개선되지 않는다는 결론(`data/reports/phase2_retraining_comparison_report.md`) — model_v3(13피처)를 공식 산출물로 유지. 상세 사양은 `plan/08_phase2_news_events.md` 참고.
 - **Phase 3 (완료, 2026-08-20)**: RL 트레이딩 에이전트. 2026-08-18 전체 검토에서 `panel.py::score_model_v3_probabilities()`가 model_v3에 raw 미스케일 피처를 넣던 **CRITICAL 버그**를 발견(raw vs 올바른 스케일링 입력의 예측 상관계수 0.044)해 수정했고, 그 버그로 학습됐던 구 정책은 폐기했다. 2026-08-19 04:03~14:45(약 10시간42분)에 수정된 코드로 6개 정책(폴드1~5 + 공식 단일분할)을 `resume=False`로 전부 재학습, 이어서 재평가해 **train/eval 입력분포가 일치하는 신뢰 가능한 결과**를 확보했다. 결론: 공식분할 RL 누적수익률 101.03%(분류기 27.09%, Buy&Hold 89.55% 대비 높음)이나, 평균 보유종목수 57.7/120·평균 현금비중 0.45%로 "정교한 타이밍"이 아니라 "항상 널리 분산해 최대 투자 상태 유지"에 가까운 저정교도 전략으로 수렴한 것으로 해석됨 — 절대수익률을 그대로 "학습된 알파"로 보지 않음. 상세는 `data/reports/phase3_rl_backtest_report_v1.md`(해석 유의사항 포함), `data/reports/phase3_reward_clipping_investigation.md`, 설계는 `plan/09_phase3_rl_agent_design.md` 참고.
-- **Phase 4 (금지, 필요시에만)**: 실시간 운영 루프. 학습과 별개의 배포 문제로 취급하고 Phase 3 이후 별도 승인 하에 진행
+- **Phase 4 (설계 확정, 2026-08-20)**: 실시간 운영 루프. `plan/10_phase4_live_operations_design.md`에 상세 설계 확정. 코드 구현은 KR(KIS)/US(Alpaca) 두 개의 독립 세션으로 병렬 진행 — 상세는 아래 "Phase 4 구체 사양" 참고
 
 각 Phase는 이전 Phase의 Definition of Done을 충족하고 사용자가 명시적으로 승인해야 다음으로 진행한다. Phase 3는 설계 확정(2026-08-17 "Phase3는 구체적인 계획을 먼저 세우자") 이후, 원자적 모듈(panel/obs_scaler → trading_env → 학습 파이프라인+실학습 → 평가) 각각을 사용자가 "진행해"로 승인하며 완료했다 — 이 방식이 실제 구현 승인 절차였다. Phase 4는 코드나 상세 설계를 아직 미리 만들지 않는다 — 스코프 확장은 반드시 사용자 지시로만 시작한다.
 
@@ -238,6 +238,34 @@ SB3의 `VecNormalize`는 기본적으로 온라인으로 통계를 갱신하는�
 - [x] PPO 학습 파이프라인(`src/rl/train_agent.py`) 구현, CPU 파일럿으로 학습 가능성 확인(필요시 Colab GPU 전환) — 파일럿 결과 병목은 환경이 아니라 정책망 추론(배치크기 1 순차 추론). `train_policy(n_envs=N)`로 DummyVecEnv 배치화 적용, 로컬 4코어 기준 n_envs=8에서 2.59배 개선(36.01→13.90ms/step, 2026-08-17). **전체 실행 첫 시도에서 PPO 학습이 실제로 불안정(approx_kl 폭주 9.9→183.2)함을 발견해 중단·조사** — 데이터 결함이 아니라(042660/CORT 극단치 둘 다 진짜 시세변동으로 확인) `learning_rate` 기본값(3e-4)이 이 문제 규모(관측 ~2,884차원, 120개 동시 행동헤드)엔 과도했던 게 원인. `3e-5`로 낮추자 완전 안정화(10개 이터레이션 내내 approx_kl 0.07~0.09, explained_variance -1.82→0.78 꾸준히 개선). `PPO_DEFAULT_PARAMS`에 `learning_rate=3e-5`/`target_kl=3.0`(2차 안전장치) 반영, `trading_env.py`에 `REWARD_CLIP=0.15`도 함께 추가. 상세 조사 과정은 `data/reports/phase3_reward_clipping_investigation.md` 참고. **전체 5폴드+공식분할 실학습 완료**(2026-08-18, 02:03~13:14, 약 11.2시간) — `data/checkpoints/rl_policy_fold{1..5}.zip`+`rl_policy_v1.zip` 전부 저장, 전체 1,464개 이터레이션에 걸쳐 approx_kl 0.065~0.226 범위 유지(재발 없음, 안정화 조치가 장시간 실행에서도 유효함을 확인). **2026-08-18 전체 검토로 model_v3_prob 채널 스케일링 버그를 발견해 수정**, 이 학습 결과(구 체크포인트)는 폐기하고 **2026-08-19 04:03~14:45(약 10시간42분) 수정된 코드로 재학습 완료** — `data/checkpoints/rl_policy_fold{1..5}.zip`+`rl_policy_v1.zip`이 현재 신뢰 가능한 최종 체크포인트
 - [x] Walk-forward 5폴드 + 공식 단일분할(test.parquet 구간) 평가 완료, Phase 1 분류기 전략/랜덤워크/Buy&Hold 대비 비교 리포트 작성(paired bootstrap 포함) — `src/backtest/significance.py::paired_bootstrap_return_diff_ci()` 신규 추가, `src/rl/evaluate.py` 구현. **2026-08-18 전체 검토로 `score_model_v3_probabilities()`의 CRITICAL 스케일링 버그를 발견·수정**(raw vs 스케일링 입력 예측 상관계수 0.044, 스케일링 후 model_v3 원래 정확도 0.5169399830938293과 정확히 일치 확인) — 그 버그로 학습됐던 구 정책·리포트는 무효화하고 폐기. **2026-08-19 04:03~14:45 수정된 코드로 6개 정책 재학습, 2026-08-20 재평가 완료** — train/eval 입력분포가 이제 일치하므로 아래 수치는 신뢰 가능. 공식분할 RL 누적수익률 101.03%(분류기 27.09%, Buy&Hold 89.55% 대비 높음)이나, 평균 보유종목수 57.7/120·평균 현금비중 0.45%로 실제로는 정교한 타이밍이 아니라 "항상 광범위하게 분산투자한 채 최대 노출 유지"로 수렴한 저정교도 전략으로 확인됨(랜덤워크 벤치마크는 매일 재추첨이라 지속보유 전략엔 약한 기준선 — 같은 구간 랜덤워크 최댓값은 14.0%뿐). 절대수익률을 "학습된 알파"로 해석하지 않음. 상세는 `data/reports/phase3_rl_backtest_report_v1.md` 참고
 - [x] `progress_log.json` 갱신, `next_action`이 "Phase 3 결과 확인 후 Phase 4 착수 여부 사용자 확인 대기"로 갱신
+
+## Phase 4 구체 사양 (2026-08-20 설계 확정 — 임의 변경 금지, 상세 근거는 `plan/10_phase4_live_operations_design.md`)
+
+**목표**: Phase 3에서 신뢰 가능하게 재학습된 `data/checkpoints/rl_policy_v1.zip`을 매일 자동으로 서빙해 모의투자(→ 향후 승인 시 실거래) 결정을 자동화한다.
+
+**핵심 결정 (임의 변경 금지)**:
+1. 모의투자(paper) 우선, 실거래(live) 자동집행도 **동일 로직에서** 가능해야 한다 — 의사결정 로직(관측 생성→정책 추론→목표 포지션 계산)은 모의/실전 공용이고, 최종 "브로커에 주문을 보낸다" 단계만 `mode: Literal["paper","live"]` 스위치로 분기. **기본값은 절대 `live=True`가 아니어야 하며, live 경로를 실제로 호출하는 건 이번 구현 범위에서 제외**(별도 승인 후).
+2. 로컬 머신 cron 실행(클라우드 서버 아님).
+3. DART/EDGAR 공시 + FinBERT 감성도 매일 갱신해서 RL 관측에 포함(`include_event_features=True`로 학습됐으므로).
+4. **v1은 단일 시장만** — `TradingEnv`의 자본배분(`equal_share`)이 120종목 단일 무차원 현금 풀 공유를 가정하는데, 실거래는 한국(원화 KIS 계좌)/미국(달러 Alpaca 계좌)이 물리적으로 분리돼 이 가정과 안 맞음. 이를 회피하기 위해 v1은 한 시장만.
+5. **KR 트랙(KIS)과 US 트랙(Alpaca)을 별도 세션으로 분리 개발** — 공유 기반(`src/live/observation.py`, `infer.py`, `allocation.py`, `safety.py`, `notify.py`, `broker/base.py`)만 먼저 완성하면 이후 트랙별 파일이 겹치지 않는다.
+6. 알림은 **Mattermost webhook 직접 사용**(n8n 경유는 부가 홉이라 필요할 때 침묵 실패 지점이 될 수 있어 배제).
+7. **Phase 4는 순수 서빙(serving)만, 재학습(training)은 범위 밖** — `rl_policy_v1.zip`을 고정 가중치로 `model.predict()`만 수행. 주기적 재학습은 명시적 결정보류(모의투자 로그로 성능 저하가 실측되면 그때 별도 논의).
+
+**아키텍처 요약**: `daily_pipeline.py`(증분 데이터 수집, 기존 `fetch_us_ohlcv`/`fetch_all_daily_snapshots`/`fetch_kr_disclosures`/`fetch_us_filings`의 "캐시 있으면 그대로 반환" 버그 수정 필요) → `observation.py`(오늘자 단일 관측벡터, `TradingEnv._build_observation()`과 동일 채널 순서이나 동적 필드는 브로커 계좌 조회로 계산) → `infer.py`(`load_checkpoint`+`model.predict`) → `allocation.py`(`TradingEnv.step()` 배분 로직의 순수 함수 재구현) → `broker/{kis,alpaca}.py`(`BrokerAdapter` 공통 인터페이스, 모드는 생성자 파라미터로만 분기) → `safety.py`(중복실행 락/한도/재구성 체크) → `decide_{kr,us}.py`(07:00 KST cron, 결정만 저장)/`execute_{kr,us}.py`(시장별 집행 시각 cron) → `notify.py`(Mattermost).
+
+**미해결 항목(명시적으로 열어둠)**: `step_frac`/`nav_ratio`는 252일 에피소드 학습 전제라 라이브의 "에피소드 없음" 상황에 잠정 규칙 필요(모의투자로 사후 검증). 결정 시각과 체결 시각 사이 오버나이트 갭은 학습 가정 비용에 없음(실제 vs 가정 비용을 리포트에 병기). 브로커 계좌 개설/API 키, rate limit, 실거래 전환 기준은 사용자/모의투자 로그 기반 재논의 대상.
+
+## Phase 4 Definition of Done (KR/US 트랙별로 별도 체크, 공유 기반 항목은 1회만)
+
+- [ ] `src/live/observation.py`가 배치 경로(`src/rl/panel.py::build_grid`)와 수치 일치 (공유, 1회만)
+- [ ] `src/live/infer.py` + `src/live/allocation.py`가 `TradingEnv` 배분 로직과 일치 (공유, 1회만)
+- [ ] 데이터 증분 수집 버그 수정 + 회귀 테스트(해당 트랙의 시장: KR은 `collect_kr.py`/`events_kr.py`, US는 `ohlcv.py`/`events_us.py`)
+- [ ] 브로커 어댑터(`kis.py` 또는 `alpaca.py`, 모의투자 도메인) mock 기반 유닛테스트 통과
+- [ ] `src/live/safety.py`가 실제로 주문을 차단하는 테스트 통과
+- [ ] `decide_*.py`/`execute_*.py` cron 등록, 최소 N영업일(사용자와 재합의 필요) 무인 모의투자 운영, 크래시 0건
+- [ ] 일일 리포트(결정/체결/실현손익 vs 시뮬레이션 가정 비교) 축적, 실거래 전환은 이 DoD 충족과 무관하게 별도 명시적 승인
+- [ ] `progress_log.json` 갱신
 
 ## 관련 스킬
 

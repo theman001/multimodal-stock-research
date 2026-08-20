@@ -1,6 +1,6 @@
 {
-  "phase": "3",
-  "last_completed_step": "phase3_reevaluate_after_retrain",
+  "phase": "4",
+  "last_completed_step": "phase4_plan_confirmed",
   "steps": [
     {
       "step": "us_data_collection",
@@ -223,8 +223,14 @@
       "status": "done",
       "timestamp": "2026-08-20T00:15:25.649034+00:00",
       "output": "data/reports/phase3_rl_backtest_report_v1.md 재생성 — 재학습된 정책을 학습과 동일한(수정된) model_v3_prob 분포로 평가, train/eval 입력분포 일치로 RL 수치 신뢰 가능. 공식분할 RL 누적수익률 101.03%(vs 분류기 27.09%, Buy&Hold 89.55%), RL이 실제로는 저정교도 광범위분산 전략으로 수렴한 것으로 보인다는 해석 유의사항 포함."
+    },
+    {
+      "step": "phase4_plan_confirmed",
+      "status": "done",
+      "timestamp": "2026-08-20T00:00:00+00:00",
+      "output": "plan/10_phase4_live_operations_design.md 신규 작성, CLAUDE.md에 \"Phase 4 구체 사양\"+\"Phase 4 Definition of Done\" 섹션 추가. 확정 사항: (1) 모의투자 우선이나 동일 로직에서 실거래 자동집행도 가능해야 함(최종 주문 단계만 모드 스위치), 기본값은 live=True 아님. (2) 로컬 cron. (3) 이벤트/감성 피처 매일 갱신. (4) v1은 단일 시장만 - TradingEnv의 단일 현금풀 가정이 KR(원화)/US(달러) 분리 계좌 구조와 안 맞아서. (5) KR(KIS)/US(Alpaca) 두 트랙을 별도 세션으로 분리 개발(공유 기반: observation.py/infer.py/allocation.py/safety.py/notify.py/broker base.py). (6) 알림은 Mattermost webhook 직접(n8n 경유 배제, 침묵 실패 지점 우려). (7) Phase 4는 순수 서빙만, 재학습은 명시적 결정보류. 조사 중 데이터 수집 파이프라인의 치명적 버그 3개 발견(fetch_us_ohlcv/fetch_all_daily_snapshots/fetch_kr_disclosures+fetch_us_filings 전부 캐시 있으면 그대로 반환 - 매일 cron 돌려도 새 날짜/공시 영원히 안 붙음)."
     }
   ],
-  "next_action": "Phase 3 결과(phase3_rl_backtest_report_v1.md) 확인 후 Phase 4 착수 여부 사용자 확인 대기",
+  "next_action": "Phase 4 KR 트랙과 US 트랙 중 어느 세션을 먼저 시작할지(또는 동시 시작) 결정 — plan/10_phase4_live_operations_design.md §E의 세션 인계 프롬프트를 새 Claude Code 세션에 그대로 전달해 착수",
   "blockers": []
 }
