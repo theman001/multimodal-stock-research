@@ -1,6 +1,6 @@
 {
   "phase": "4",
-  "last_completed_step": "phase4_kr_step3b_get_current_price",
+  "last_completed_step": "phase4_kr_step4_review_round2",
   "steps": [
     {
       "step": "us_data_collection",
@@ -481,6 +481,24 @@
       "status": "done",
       "timestamp": "2026-08-20T08:48:39.639618+00:00",
       "output": "Phase 4 KR 3단계 추가: 사용자 결정(execute_kr.py가 KIS 현재가 조회로 notional-> 정수 qty 변환)에 따라 kis.py::get_current_price() 신규 추가(FHKST01010100, /uapi/domestic-stock/v1/quotations/inquire-price) — BrokerAdapter ABC가 아닌 KISBroker 전용 메서드(Alpaca는 notional 직접 지원해 이 개념 자체가 불필요). review-loop 1차: data[\"output\"][\"stck_prpr\"] 직접 인덱싱이 같은 파일의 다른 메서드(.get() 방어 패턴)와 불일치 — 거래정지/상장폐지 종목이 rt_cd=0인데 output이 비어있으면 원인불명 KeyError로 죽는 문제 발견, .get() 체인 + 명확한 도메인 에러로 수정, 회귀 테스트 추가. 2차: 수정 내역 없음(price=0인 경우도 기존 유한성/양수 체크로 이미 방어됨 확인). 신규 테스트 5건. pytest tests/ -v 370개 전체 통과, leakage-guard 통과."
+    },
+    {
+      "step": "phase4_kr_step4_decide_execute",
+      "status": "done",
+      "timestamp": "2026-08-20T08:56:57.366496+00:00",
+      "output": "Phase 4 KR 4단계: src/live/decide_kr.py + execute_kr.py 신규 — decide_us.py/execute_us.py를 KR 시장 필터로 미러링(safety.py는 재작성 없이 track=\"kr\"로 그대로 재사용). execute_kr.py의 KR 고유 분기: KIS가 notional 주문을 지원하지 않아 BUY 주문마다 KISBroker.get_current_price()로 체결 직전 실시간 현재가를 조회해 int(notional // price)로 정수 수량 변환(2026-08-20 사용자 결정), qty<=0(고가주+소액배분으로 1주도 못 사는 경우 — KIS 정수수량 제약에서만 생기는 새 경로)이면 조용히 건너뜀. SELL은 US와 동일하게 브로커 현재 보유수량 그대로 사용(가격조회 불필요). decide_kr.py는 execute_us.py와 마찬가지로 mode/broker.mode 이중 방어로 live 우회 차단. 신규 테스트 27건(decide 9 + execute 18, mock 기반). pytest tests/ -v 397개 전체 통과, leakage-guard 통과(테스트 픽스처의 .fit()는 US 트랙과 동일한 더미 스케일러 placeholder, train/test 오염 아님). review-loop 아직 미적용."
+    },
+    {
+      "step": "phase4_kr_step4_review_round1",
+      "status": "done",
+      "timestamp": "2026-08-20T08:59:40.779330+00:00",
+      "output": "review-loop(decide_kr/execute_kr) 1차: execute_kr.py에서 get_current_price()가 execute_us.py에는 없던 종목별 추가 네트워크 호출인데, 이게 루프 안에서 예외를 던지면 그 티커 매수뿐 아니라 아직 처리 안 된 다른 매수/무관한 매도까지 통째로 막는 문제 발견(SELL을 항상 허용하는 킬스위치 철학과 반대 방향) — BUY 처리(가격 조회+qty계산+주문제출)를 try/except로 감싸 실패 반경을 그 티커 하나로 좁히고, 실패한 티커들을 모아 마지막에 알림 1건으로만 통지(종목별 스팸 방지)하도록 수정. 재현 회귀 테스트 1건 추가(005930 가격조회 실패, 003545 매수/000660 매도는 정상 제출되는지 확인). pytest tests/ -v 398개 전체 통과, leakage-guard 통과."
+    },
+    {
+      "step": "phase4_kr_step4_review_round2",
+      "status": "done",
+      "timestamp": "2026-08-20T09:01:22.279753+00:00",
+      "output": "review-loop(decide_kr/execute_kr) 2차: BUY 실패 격리(1차 수정) 이후 SELL 주문 실패는 여전히 전체 사이클을 중단시키는 비대칭 구조가 남는지 확인 — 재구성 체크를 통과한 뒤 SELL이 실패하는 건 계좌 상태 자체가 의심스러운 더 심각한 신호라 fail-safe로 전체 중단하는 게 합리적이라 판단, 구체적 트리거 없이 손대지 않음. try/except 안의 continue가 qty<=0/예외 두 경로 모두 올바르게 다음 루프로 넘어가는지, 1차 수정이 BUY 부분성공 시 save_state()/last_executed_date 저장을 오히려 더 안전하게 만드는 부수효과가 있는지도 재확인. decide_kr.py의 티커 매핑 통합 지점도 재점검(문제 없음, decide_us.py와 동일 검증된 패턴). 수정 내역 없음. pytest tests/ -v 398개 전체 통과, leakage-guard 통과."
     }
   ],
   "next_action": "Phase 4 KR 원자적 순서 4단계 — plan/10 §C-4 4번: safety.py는 US 트랙에서 이미 track 파라미터로 격리된 공유 모듈이라 그대로 재사용(재작성 금지). decide_kr.py/execute_kr.py 신규 작성(decide_us.py/execute_us.py를 KR 시장 필터로 구조 그대로 미러링하되, KIS는 notional 미지원이므로 compute_target_allocations()가 만드는 notional을 execute_kr.py에서 정수 qty로 변환하는 로직을 명시적으로 설계해야 함 — kis.py::place_market_order()가 notional을 거부하도록 이미 구현됨, 가격 조회 방법 결정 필요). cron 등록은 decide 07:00 KST / execute 09:00 KST(plan/10 §B-6) 준비만 해두고 실제 시스템 crontab 설치는 보류 (KIS 앱키 미설정, 무인 운영은 별도 승인 필요).",
