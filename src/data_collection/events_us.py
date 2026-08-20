@@ -81,19 +81,43 @@ def _fetch_all_filings_for_cik(cik: int, start_date: str, headers: dict) -> pd.D
 
 
 def fetch_us_filings(
-    cik: int, ticker: str, raw_dir: Path, start_date: str = START_DATE, force: bool = False
+    cik: int,
+    ticker: str,
+    raw_dir: Path,
+    start_date: str = START_DATE,
+    force: bool = False,
+    incremental: bool = True,
 ) -> pd.DataFrame:
-    """CIK(+PREDECESSOR_CIKS 등록분)의 filing 이력에서 TARGET_FORMS만 남겨 raw 캐싱한다 (캐시 우선)."""
+    """CIK(+PREDECESSOR_CIKS 등록분)의 filing 이력에서 TARGET_FORMS만 남겨 raw 캐싱한다.
+
+    `incremental=True`(기본값)면 캐시가 있어도 캐시의 마지막 `filingDate`
+    이후분만 SEC에 재조회해 append+dedup한다 — 캐시가 있다고 그대로
+    반환하면(구 동작) 매일 돌려도 새 공시가 영영 안 붙는 버그가 있었음.
+    `force=True`는 캐시를 무시하고 `start_date`부터 전체를 재수집한다.
+    `incremental=False`는 캐시가 있으면 그대로 반환(구 동작, 네트워크 호출
+    없이 재현하고 싶은 경우용) — `force`가 우선한다.
+    """
     cache_path = raw_dir / "events" / f"filings_{ticker}.parquet"
-    if cache_path.exists() and not force:
-        return pd.read_parquet(cache_path)
+    cached = pd.read_parquet(cache_path) if cache_path.exists() and not force else None
+
+    if cached is not None and not incremental:
+        return cached
+
+    fetch_start = start_date
+    if cached is not None and not cached.empty:
+        fetch_start = cached["filingDate"].max()
 
     headers = {"User-Agent": _sec_user_agent()}
     all_ciks = [cik] + PREDECESSOR_CIKS.get(ticker, [])
-    frames = [_fetch_all_filings_for_cik(c, start_date, headers) for c in all_ciks]
+    frames = [_fetch_all_filings_for_cik(c, fetch_start, headers) for c in all_ciks]
     frames = [f for f in frames if not f.empty]
     combined = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=_KEEP_COLUMNS)
-    result = _filter_target_filings(combined, ticker, start_date)
+    new_result = _filter_target_filings(combined, ticker, fetch_start)
+
+    if cached is not None and not cached.empty:
+        result = pd.concat([cached, new_result], ignore_index=True)
+    else:
+        result = new_result
     result = result.drop_duplicates(subset="accessionNumber").sort_values("filingDate").reset_index(drop=True)
 
     cache_path.parent.mkdir(parents=True, exist_ok=True)
