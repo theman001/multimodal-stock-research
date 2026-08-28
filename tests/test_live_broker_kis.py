@@ -40,8 +40,6 @@ _BALANCE_PAYLOAD = {
     "output2": [{"dnca_tot_amt": "1000000", "tot_evlu_amt": "1700000"}],
 }
 _ORDER_PAYLOAD = {"rt_cd": "0", "msg1": "정상처리 되었습니다.", "output": {"ODNO": "order-1", "ORD_TMD": "090001"}}
-_HOLIDAY_TRADING_DAY_PAYLOAD = {"rt_cd": "0", "msg1": "정상", "output": [{"bass_dt": "20260820", "opnd_yn": "Y"}]}
-_HOLIDAY_CLOSED_DAY_PAYLOAD = {"rt_cd": "0", "msg1": "정상", "output": [{"bass_dt": "20260815", "opnd_yn": "N"}]}
 _PRICE_PAYLOAD = {"rt_cd": "0", "msg1": "정상", "output": {"stck_prpr": "71000"}}
 
 
@@ -62,16 +60,13 @@ def _post_dispatcher(order_payload=None, hashkey_payload=None, token_payload=Non
     return _dispatch
 
 
-def _get_dispatcher(balance_payload=None, holiday_payload=None, price_payload=None):
+def _get_dispatcher(balance_payload=None, price_payload=None):
     balance_payload = balance_payload or _BALANCE_PAYLOAD
-    holiday_payload = holiday_payload or _HOLIDAY_TRADING_DAY_PAYLOAD
     price_payload = price_payload or _PRICE_PAYLOAD
 
     def _dispatch(url, *args, **kwargs):
         if url.endswith("/uapi/domestic-stock/v1/trading/inquire-balance"):
             return _FakeResponse(balance_payload)
-        if url.endswith("/uapi/domestic-stock/v1/quotations/chk-holiday"):
-            return _FakeResponse(holiday_payload)
         if url.endswith("/uapi/domestic-stock/v1/quotations/inquire-price"):
             return _FakeResponse(price_payload)
         raise AssertionError(f"예상치 못한 GET 호출: {url}")
@@ -282,25 +277,29 @@ def test_http_error_includes_response_body_detail(kis_env, monkeypatch):
         broker.get_cash()
 
 
-def test_is_market_open_false_on_holiday(kis_env, monkeypatch):
-    monkeypatch.setattr(requests.Session, "post", MagicMock(side_effect=_post_dispatcher()))
-    monkeypatch.setattr(
-        requests.Session,
-        "get",
-        MagicMock(side_effect=_get_dispatcher(holiday_payload=_HOLIDAY_CLOSED_DAY_PAYLOAD)),
-    )
+def test_is_market_open_false_on_weekend_without_network_call(kis_env, monkeypatch):
+    """`chk-holiday`(TR_ID CTCA0903R)를 모의투자 도메인에 실제로 호출해보니
+    KIS가 `모의투자 TR이 아닙니다`로 거부함을 확인(2026-08-20 실제 API 스모크
+    테스트) — 실전 앱키 없이 로컬 요일 판단만으로 처리하도록 전환했다.
+    네트워크 호출 자체가 없어야 한다는 것까지 검증."""
+    get_mock = MagicMock(side_effect=AssertionError("is_market_open()은 네트워크 호출을 하면 안 됨"))
+    monkeypatch.setattr(requests.Session, "get", get_mock)
+    saturday = pd.Timestamp("2026-08-22", tz="Asia/Seoul").replace(hour=10, minute=0)
+    monkeypatch.setattr(pd.Timestamp, "now", classmethod(lambda cls, tz=None: saturday))
     broker = KISBroker(mode="paper")
     assert broker.is_market_open() is False
+    get_mock.assert_not_called()
 
 
-def test_is_market_open_checks_time_window_when_trading_day(kis_env, monkeypatch):
-    """휴장일이 아니면 시간 경계 판단(_is_within_market_hours)에 위임한다 —
-    실제 반환값은 테스트 실행 시각에 따라 달라지므로 bool 타입만 확인하고,
-    경계값 자체는 시각을 직접 주입할 수 있는 _is_within_market_hours로 검증한다."""
-    monkeypatch.setattr(requests.Session, "post", MagicMock(side_effect=_post_dispatcher()))
-    monkeypatch.setattr(requests.Session, "get", MagicMock(side_effect=_get_dispatcher()))
+def test_is_market_open_delegates_to_market_hours_on_weekday(kis_env, monkeypatch):
+    """평일이면 휴장일 API 없이 `_is_within_market_hours()`에만 위임한다."""
+    get_mock = MagicMock(side_effect=AssertionError("is_market_open()은 네트워크 호출을 하면 안 됨"))
+    monkeypatch.setattr(requests.Session, "get", get_mock)
+    thursday_in_hours = pd.Timestamp("2026-08-20", tz="Asia/Seoul").replace(hour=10, minute=0)
+    monkeypatch.setattr(pd.Timestamp, "now", classmethod(lambda cls, tz=None: thursday_in_hours))
     broker = KISBroker(mode="paper")
-    assert isinstance(broker.is_market_open(), bool)
+    assert broker.is_market_open() is True
+    get_mock.assert_not_called()
 
 
 @pytest.mark.parametrize(

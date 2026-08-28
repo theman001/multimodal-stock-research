@@ -72,7 +72,6 @@ _TOKEN_EXPIRY_BUFFER_SECONDS = 60  # 만료 시각 직전 재사용해 요청 �
 _BALANCE_PATH = "/uapi/domestic-stock/v1/trading/inquire-balance"
 _ORDER_PATH = "/uapi/domestic-stock/v1/trading/order-cash"
 _HASHKEY_PATH = "/uapi/hashkey"
-_HOLIDAY_PATH = "/uapi/domestic-stock/v1/quotations/chk-holiday"
 _PRICE_PATH = "/uapi/domestic-stock/v1/quotations/inquire-price"
 _TOKEN_PATH = "/oauth2/tokenP"
 
@@ -80,7 +79,6 @@ _TOKEN_PATH = "/oauth2/tokenP"
 _TR_ID_BALANCE = {"paper": "VTTC8434R", "live": "TTTC8434R"}
 _TR_ID_BUY = {"paper": "VTTC0802U", "live": "TTTC0802U"}
 _TR_ID_SELL = {"paper": "VTTC0801U", "live": "TTTC0801U"}
-_TR_ID_HOLIDAY = "CTCA0903R"  # 조회성 TR이라 모의/실전 공통으로 추정 — 재확인 필요
 _TR_ID_CURRENT_PRICE = "FHKST01010100"  # 조회성 TR이라 모의/실전 공통으로 추정 — 재확인 필요
 
 _ORDER_DVSN_MARKET = "01"  # 시장가
@@ -338,19 +336,17 @@ class KISBroker(BrokerAdapter):
         )
 
     def is_market_open(self) -> bool:
+        """휴장일(설/추석 등 국공휴일) 여부는 확인하지 않는다 — `chk-holiday`
+        (TR_ID CTCA0903R)를 모의투자 도메인에 실제로 호출해보니 KIS가
+        `rt_cd="1", msg_cd="EGW02006", msg1="모의투자 TR이 아닙니다"`로
+        거부했고, KIS 공식 Postman 샘플에도 이 TR이 `[실전투자]`로만 표기돼
+        있다(실전 도메인 전용으로 보임). 이걸 풀려면 실전 앱키가 있어야 하는데
+        "모의투자만 먼저" 원칙과 맞지 않아 채택하지 않았다(2026-08-20 사용자
+        결정). 대신 평일+장중시간(KST)만 로컬로 확인하고, 실제 국공휴일에
+        `execute_kr.py`가 돌아가더라도 KIS 주문 API 자체가 명확한 에러로
+        거부하는 걸 안전망으로 삼는다(조용히 잘못된 주문이 나가지 않음 —
+        `_raise_for_status_with_body`가 실패 사유를 그대로 드러냄)."""
         now_kst = pd.Timestamp.now(tz="Asia/Seoul")
-        resp = self._session.get(
-            self._url(_HOLIDAY_PATH),
-            params={"BASS_DT": now_kst.strftime("%Y%m%d"), "CTX_AREA_NK": "", "CTX_AREA_FK": ""},
-            headers=self._auth_headers(_TR_ID_HOLIDAY),
-            timeout=self.timeout,
-        )
-        _raise_for_status_with_body(resp)
-        data = resp.json()
-        _check_rt_cd(data)
-        output = data.get("output", [])
-        is_trading_day = bool(output) and output[0].get("opnd_yn") == "Y"
-        if not is_trading_day:
+        if now_kst.dayofweek >= 5:  # 5=토, 6=일
             return False
-
         return _is_within_market_hours(now_kst)
