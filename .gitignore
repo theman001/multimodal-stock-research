@@ -7,3 +7,6 @@ venv/
 .ipynb_checkpoints/
 plan/
 multimodal stock research.ipynb
+
+# Phase 4 runtime state (per-machine — decisions, account state, logs, lock files)
+data/live/

@@ -52,6 +52,17 @@ def _kst_today() -> pd.Timestamp:
     return pd.Timestamp.now(tz="Asia/Seoul").tz_localize(None).normalize()
 
 
+def _latest_kr_trading_day(data_root: Path) -> pd.Timestamp:
+    """관측 대상 거래일 = 방금 수집한 KR OHLCV에 실제로 존재하는 가장 최근
+    날짜. decide는 07:00 KST(KR장 09:00 개장 전)에 도므로 그 시점의 KST
+    캘린더 날짜(`_kst_today`)는 KR장이 아직 안 열린 날이다 — 마지막으로
+    완료된 거래일은 전 영업일이고, 그건 수집 데이터의 max(date)가 알려준다
+    (주말·공휴일 자동 처리). 결정 파일명/execute 핸드오프는 여전히 KST
+    날짜를 쓴다(목적이 다름 — decide_us._latest_us_trading_day와 동일 구조)."""
+    ohlcv = pd.read_parquet(data_root / "processed" / "ohlcv_meta_kr.parquet")
+    return pd.Timestamp(ohlcv["date"].max()).normalize()
+
+
 def decision_path(data_root: Path, target_date: pd.Timestamp) -> Path:
     return data_root / "live" / "decisions" / f"kr_{target_date.date()}.json"
 
@@ -95,9 +106,15 @@ def run_decide(
             collect_events_kr(data_root)
             score_events_kr(data_root)
 
+            # 관측일은 KST 캘린더 날짜가 아니라 "마지막으로 완료된 KR 거래일"이다
+            # (_latest_kr_trading_day docstring 참고). 결정 파일명·payload·알림은
+            # 그대로 target_date(KST)를 쓴다 — execute_kr가 같은 KST 날짜로
+            # 핸드오프하므로.
+            observation_date = _latest_kr_trading_day(data_root)
+
             features_override = build_live_features_window(
                 data_root,
-                target_date=target_date,
+                target_date=observation_date,
                 lookback_days=LOOKBACK_DAYS,
                 market_id=MARKET_ID_KR,
                 include_event_features=INCLUDE_EVENT_FEATURES,
@@ -107,7 +124,7 @@ def run_decide(
                 data_root=data_root,
                 checkpoints_dir=checkpoints_dir,
                 checkpoint_name=CHECKPOINT_NAME,
-                target_date=target_date,
+                target_date=observation_date,
                 broker_positions=current_positions,
                 broker_cash=current_cash,
                 nav_anchor=state.nav_anchor,

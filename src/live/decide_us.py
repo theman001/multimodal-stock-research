@@ -52,6 +52,20 @@ def _kst_today() -> pd.Timestamp:
     return pd.Timestamp.now(tz="Asia/Seoul").tz_localize(None).normalize()
 
 
+def _latest_us_trading_day(data_root: Path) -> pd.Timestamp:
+    """관측 대상 거래일 = 방금 수집한 US OHLCV에 실제로 존재하는 가장 최근
+    날짜. decide는 07:00 KST에 도는데, 그 시점의 KST 캘린더 날짜(`_kst_today`)는
+    미국장이 아직 안 열린 날일 수 있다 — 예: 금요일 아침 KST면 미국의 목요일
+    장이 막 끝났고 금요일 장은 그날 밤(22:30 KST)에야 열린다. 그때 `_kst_today`를
+    관측일로 넘기면 features/OHLCV에 그 날 행이 없어 `build_today_observation`이
+    실패한다(실제로 이 경로로 크래시하는 걸 첫 수동 실행에서 확인). 마지막으로
+    체결이 끝난 거래일은 수집 데이터의 max(date)가 알려준다(주말·미국 공휴일도
+    자동 처리 — 별도 캘린더 불필요). 결정 파일명/execute 핸드오프는 여전히
+    KST 날짜(`_kst_today`)를 쓴다 — 그 둘은 목적이 다르다."""
+    ohlcv = pd.read_parquet(data_root / "processed" / "ohlcv_meta_us.parquet")
+    return pd.Timestamp(ohlcv["date"].max()).normalize()
+
+
 def decision_path(data_root: Path, target_date: pd.Timestamp) -> Path:
     return data_root / "live" / "decisions" / f"us_{target_date.date()}.json"
 
@@ -95,9 +109,15 @@ def run_decide(
             collect_events_us(data_root)
             score_events_us(data_root)
 
+            # 관측일은 KST 캘린더 날짜가 아니라 "마지막으로 완료된 US 거래일"이다
+            # (_latest_us_trading_day docstring 참고). 결정 파일명·payload·알림은
+            # 그대로 target_date(KST)를 쓴다 — execute_us가 같은 KST 날짜로
+            # 핸드오프하므로.
+            observation_date = _latest_us_trading_day(data_root)
+
             features_override = build_live_features_window(
                 data_root,
-                target_date=target_date,
+                target_date=observation_date,
                 lookback_days=LOOKBACK_DAYS,
                 market_id=MARKET_ID_US,
                 include_event_features=INCLUDE_EVENT_FEATURES,
@@ -107,7 +127,7 @@ def run_decide(
                 data_root=data_root,
                 checkpoints_dir=checkpoints_dir,
                 checkpoint_name=CHECKPOINT_NAME,
-                target_date=target_date,
+                target_date=observation_date,
                 broker_positions=current_positions,
                 broker_cash=current_cash,
                 nav_anchor=state.nav_anchor,

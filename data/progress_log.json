@@ -1,6 +1,6 @@
 {
   "phase": "4",
-  "last_completed_step": "phase4_kr_step4_cron_and_docs",
+  "last_completed_step": "phase4_us_first_manual_dry_run_bugfixes",
   "steps": [
     {
       "step": "us_data_collection",
@@ -505,11 +505,17 @@
       "status": "done",
       "timestamp": "2026-08-20T09:11:51.975732+00:00",
       "output": "Phase 4 KR 4단계 마무리: src/live/cron_kr.txt 신규(cron_us.txt와 동일 형식, decide 07:00 KST/execute 09:00~09:55 KST 5분마다 — KR은 09:00 정시 개장·DST 없어 US의 넓은 창보다 좁혀도 됨) — 참고용 crontab 스니펫만 준비, 시스템 crontab에는 설치 안 함(KIS 앱키 미설정, 무인 운영은 별도 승인 필요). execute_kr.py 모듈 docstring의 시간창 서술을 cron_kr.txt와 일치하도록 09:00~09:55로 정정. notify.py는 재작성 없이 그대로 재사용(decide_kr.py/execute_kr.py에 이미 send_notification 연동 완료돼 있어 별도 5단계 작업 불필요 — CLAUDE.md Phase4 DoD 갱신). CLAUDE.md 로드맵 요약/Phase4 문단/DoD 체크리스트를 KR 트랙 완료 상태로 갱신(전부 US 전용 서술이었던 것을 KR/US 병기로 수정). pytest tests/ -v 398개 전체 통과."
+    },
+    {
+      "step": "phase4_us_first_manual_dry_run_bugfixes",
+      "status": "done",
+      "timestamp": "2026-08-28T08:33:47.723745+00:00",
+      "output": "US 트랙 decide_us.py 첫 수동 end-to-end 실행(모의계좌 실 API + 11일치 증분 수집)에서 실제 버그 2건 발견·수정. (1) score_events.py: 문서단위 감성 캐시(raw/us/events/sentiment/*.json)가 git 미커밋이라 새 환경에서 매 실행이 US 7,966건 전체를 FinBERT CPU 재스코어링(2h15m 관측) — 커밋돼 있는 events_sentiment_{us,kr}.parquet 자체를 캐시로 함께 쓰도록 _load_prior_scores() 추가, 진짜 신규 문서만 모델에 넣음. events_sentiment_us.parquet 7,944->7,966 갱신. (2) decide_us.py/decide_kr.py: 관측 target_date를 _kst_today()(KST 캘린더 날짜)로 넘겨 07:00 KST 실행 시 아직 안 열린 당일 장을 관측하려다 'features.parquet에 오늘자 행 없음'으로 크래시 — 관측일=수집 데이터의 마지막 거래일(_latest_{us,kr}_trading_day())로 분리, 결정 파일명/execute 핸드오프는 그대로 KST 날짜 유지. 기존 테스트들이 target_date=ohlcv.max()로 손수 우회 중이라 실 cron 경로가 미검증이었음. 회귀 테스트 3건 추가(test_score_events 2 + test_live_decide_us 1). pytest tests/ 400개 전체 통과. decide_us 재실행 성공 — 결정 파일 정상 생성(33건 매수, NAV $100k Alpaca 모의계좌)."
     }
   ],
-  "next_action": "Phase 4 KR 트랙 코드 구현(1~5단계 상당) 전부 완료 — plan/10 §C-4 6번: 일정 기간 모의투자 무인 운영 시작은 이 세션이 결정하지 않고 반드시 별도 사용자 재승인 필요. 선행 조건(사용자 액션): (1) KIS 모의투자 앱키/시크릿/계좌번호 발급 후 .env에 KIS_PAPER_APP_KEY/KIS_PAPER_APP_SECRET/KIS_PAPER_CANO/KIS_PAPER_ACNT_PRDT_CD 설정 (2) MATTERMOST_WEBHOOK_URL .env 설정(US 트랙과 공유, 이미 설정됐다면 KR도 자동 적용됨) (3) 사용자가 cron_kr.txt 설치를 명시적으로 승인. 그 전까지 KIS 실제 API TR_ID/응답 필드명(broker/kis.py 모듈 docstring에 재확인 필요라고 명시된 항목들)을 첫 스모크 테스트로 검증하는 것도 권장. US 트랙(cron_us.txt)도 동일하게 대기 중 — 두 트랙 모두 코드/테스트/review-loop 검증까지 완료된 상태.",
+  "next_action": "US 트랙: decide_us/execute_us 코드 검증 완료(첫 수동 실행에서 버그 2건 수정, 파이프라인 end-to-end 정상). 무인 cron 운영 시작은 여전히 별도 사용자 승인 필요 — cron_us.txt 설치 시 그날 22:30 KST부터 실제 모의주문 집행. KR 트랙: 코드는 동일 버그 2건 함께 수정했으나 KIS 모의투자 계좌-앱키 불일치(msg_cd 90070000, '모의투자 처리계좌의 ID와 사용자정보가 상이')가 블로커 — 사용자가 KIS Developers에서 앱키 발급 HTS ID와 모의계좌 소유 HTS ID 일치/상시모의투자 참가신청 여부 확인 필요.",
   "blockers": [
-    "Alpaca 모의투자 API 키(.env)가 아직 미설정 — 실제 cron 가동 전 사용자가 발급/설정 필요",
-    "MATTERMOST_WEBHOOK_URL(.env)이 아직 미설정 — 알림이 stderr 로그로만 남고 실제 Mattermost에는 전송되지 않음, 사용자가 webhook URL 설정 필요"
+    "KR: KIS 모의투자 계좌-앱키 불일치 — inquire-balance가 msg_cd 90070000으로 거부(토큰 발급·현재가 조회는 정상). 사용자가 KIS 웹에서 계좌/앱키 HTS ID 일치 및 상시모의투자 참가신청 확인 필요",
+    "US/KR 공통: cron 미설치 — 무인 모의투자 운영 시작은 별도 명시적 승인 필요(CLAUDE.md Phase 4 DoD)"
   ]
 }

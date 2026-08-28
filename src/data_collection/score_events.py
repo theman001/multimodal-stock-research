@@ -42,6 +42,26 @@ def _write_progress(progress_path: Path | None, market: str, done: int, total: i
     tmp_path.replace(progress_path)
 
 
+def _load_prior_scores(parquet_path: Path, key_col: str) -> dict[str, dict]:
+    """이전 실행이 저장한 집계 결과(`events_sentiment_{us,kr}.parquet`)를
+    `{key: {"score","num_sentences","num_windows"}}`로 읽는다.
+
+    per-doc JSON 캐시(`raw/.../sentiment/*.json`)는 용량 때문에 git에
+    커밋되지 않아서, 새 환경/CI에서는 비어 있다 — 그러면 매 실행이 전체
+    이력(US 7,900여 건, KR 22,000여 건)을 FinBERT로 재스코어링해 CPU에서
+    몇 시간씩 걸린다(라이브 07:00 cron으로는 불가). 반면 이 집계 parquet은
+    `data/`와 함께 커밋되므로, 이걸 캐시로 함께 쓰면 캐시 디렉터리가 빈
+    환경에서도 진짜 신규 문서만 모델에 넣는다."""
+    if not parquet_path.exists():
+        return {}
+    df = pd.read_parquet(parquet_path)
+    cols = ["score", "num_sentences", "num_windows"]
+    return {
+        rec[key_col]: {c: rec[c] for c in cols}
+        for rec in df[[key_col, *cols]].to_dict("records")
+    }
+
+
 def _load_cached_ids(cache_dir: Path, prefix: str) -> set[str]:
     """`{cache_dir}/{prefix}{id}.json` 캐시 파일 목록을 한 번에 읽어 id 집합으로 반환한다.
 
@@ -65,10 +85,17 @@ def score_events_us(
     if limit:
         events = events.head(limit)
 
+    processed_dir = data_root / "processed"
+    output_path = processed_dir / "events_sentiment_us.parquet"
+
     cache_dir = raw_dir / "events" / "sentiment"
     cache_load_t0 = time.time()
     cached_ids = _load_cached_ids(cache_dir, "us_")
-    print(f"[score_events_us] 캐시 목록 조회: {len(cached_ids)}건, {round(time.time() - cache_load_t0, 1)}s")
+    prior_scores = _load_prior_scores(output_path, "accessionNumber")
+    print(
+        f"[score_events_us] 캐시 목록 조회: JSON {len(cached_ids)}건 + parquet {len(prior_scores)}건, "
+        f"{round(time.time() - cache_load_t0, 1)}s"
+    )
 
     started = time.time()
     rows = []
@@ -81,6 +108,8 @@ def score_events_us(
                 t0 = time.time()
                 result = json.loads((cache_dir / f"us_{accession}.json").read_text(encoding="utf-8"))
                 cache_read_time += time.time() - t0
+            elif accession in prior_scores:
+                result = prior_scores[accession]
             else:
                 result = score_us_filing(cik=e["cik"], accession_number=accession, primary_document=e["primaryDocument"], raw_dir=raw_dir)
             rows.append({"ticker": e["ticker"], "accessionNumber": accession, **result})
@@ -96,9 +125,7 @@ def score_events_us(
         raise RuntimeError("US 감성 스코어링 결과가 비어 있음 — 전체 실패")
 
     combined = pd.DataFrame(rows)
-    processed_dir = data_root / "processed"
     processed_dir.mkdir(parents=True, exist_ok=True)
-    output_path = processed_dir / "events_sentiment_us.parquet"
     combined.to_parquet(output_path, index=False)
     print(f"[score_events_us] {len(combined)}건 저장 -> {output_path}")
     return combined
@@ -113,10 +140,17 @@ def score_events_kr(
     if limit:
         events = events.head(limit)
 
+    processed_dir = data_root / "processed"
+    output_path = processed_dir / "events_sentiment_kr.parquet"
+
     cache_dir = raw_dir / "events" / "sentiment"
     cache_load_t0 = time.time()
     cached_ids = _load_cached_ids(cache_dir, "kr_")
-    print(f"[score_events_kr] 캐시 목록 조회: {len(cached_ids)}건, {round(time.time() - cache_load_t0, 1)}s")
+    prior_scores = _load_prior_scores(output_path, "rcept_no")
+    print(
+        f"[score_events_kr] 캐시 목록 조회: JSON {len(cached_ids)}건 + parquet {len(prior_scores)}건, "
+        f"{round(time.time() - cache_load_t0, 1)}s"
+    )
 
     started = time.time()
     rows = []
@@ -129,6 +163,8 @@ def score_events_kr(
                 t0 = time.time()
                 result = json.loads((cache_dir / f"kr_{rcept_no}.json").read_text(encoding="utf-8"))
                 cache_read_time += time.time() - t0
+            elif rcept_no in prior_scores:
+                result = prior_scores[rcept_no]
             else:
                 print(f"[score_events_kr] 캐시 미스 - 신규 처리 중: rcept_no={rcept_no} ({i}번째)", flush=True)
                 fetch_t0 = time.time()
@@ -147,9 +183,7 @@ def score_events_kr(
         raise RuntimeError("KR 감성 스코어링 결과가 비어 있음 — 전체 실패")
 
     combined = pd.DataFrame(rows)
-    processed_dir = data_root / "processed"
     processed_dir.mkdir(parents=True, exist_ok=True)
-    output_path = processed_dir / "events_sentiment_kr.parquet"
     combined.to_parquet(output_path, index=False)
     print(f"[score_events_kr] {len(combined)}건 저장 -> {output_path}")
     return combined

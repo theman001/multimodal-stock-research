@@ -178,6 +178,24 @@ def test_run_decide_produces_decision_file_with_expected_structure(data_root):
         assert order["side"] in ("buy", "sell")
 
 
+def test_run_decide_observes_last_trading_day_when_kst_date_is_ahead(data_root):
+    """실제 cron 경로(07:00 KST)에서 target_date는 아직 US장이 안 열린 날일 수
+    있다 — 그때도 관측은 마지막으로 완료된 거래일(ohlcv max)로 만들어져야
+    크래시하지 않는다. 결정 파일명·payload는 그대로 넘긴 KST 날짜를 쓴다."""
+    broker = _FakeBroker(positions={}, cash=1000.0, nav=1000.0)
+    ohlcv = pd.read_parquet(data_root / "processed" / "ohlcv_meta_us.parquet")
+    last_session = pd.Timestamp(ohlcv["date"].max())
+    kst_today = last_session + pd.Timedelta(days=1)  # US장이 아직 안 열린 "오늘"
+
+    path = run_decide(data_root=data_root, target_date=kst_today, broker=broker)
+
+    assert path == decision_path(data_root, kst_today)
+    import json
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["target_date"] == str(kst_today.date())
+
+
 def test_run_decide_does_not_call_broker_place_order(data_root):
     """decide_us.py는 절대 주문을 내지 않는다(plan/10 §B-6 — 결정만 저장)."""
     broker = _FakeBroker(positions={}, cash=1000.0, nav=1000.0)
