@@ -194,7 +194,18 @@ def run_decide(
 
     n_buy = sum(1 for o in orders if o.side == "buy")
     n_sell = sum(1 for o in orders if o.side == "sell")
-    send_notification(f"[KR] decide 완료({target_date.date()}): 매수 {n_buy}건/매도 {n_sell}건 저장", level="info")
+    # 07:00 KST = KR장 개장 전이라 obs_result.nav/cash 는 전 거래일 마감 기준
+    # 스냅샷 — 매일 이 알림 하나로 모의투자 현황을 훑을 수 있게 붙인다
+    # (decide_us.py와 동일, 통화만 원).
+    nav, cash, anchor = obs_result.nav, obs_result.cash, state.nav_anchor
+    total_ret = f"{nav / anchor - 1:+.2%}" if anchor > 0 else "n/a"
+    cash_pct = f"{cash / nav:.1%}" if nav > 0 else "n/a"
+    n_pos = sum(1 for p in current_positions.values() if p.qty != 0)
+    send_notification(
+        f"[KR] decide 완료({target_date.date()}): 매수 {n_buy}건/매도 {n_sell}건 저장\n"
+        f"NAV ₩{nav:,.0f} (누적 {total_ret}) · 현금 ₩{cash:,.0f} ({cash_pct}) · 보유 {n_pos}종목",
+        level="info",
+    )
 
     return path
 

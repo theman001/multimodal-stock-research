@@ -343,6 +343,8 @@ def test_run_decide_sends_info_notification_on_success(data_root):
     text, level = calls[0]
     assert level == "info"
     assert "decide 완료" in text
+    # 포트폴리오 스냅샷 한 줄 — 매일 이 알림으로 모의투자 현황을 훑을 수 있어야 함
+    assert "NAV $" in text and "누적" in text and "보유" in text
 
 
 def test_run_decide_second_call_same_day_blocked_by_lock_if_concurrent(data_root):
