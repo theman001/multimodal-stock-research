@@ -291,6 +291,19 @@ def test_enforce_order_caps_never_blocks_sell_orders():
     assert len(result) == 1
 
 
+def test_enforce_order_caps_drops_sub_dollar_buys():
+    """잔여 현금이 거의 없을 때 allocation.py 가 종목당 $0.06 같은 값을 만든다 —
+    Alpaca 최소 주문금액($1) 미만이라 그대로 제출하면 execute 가 크래시한다
+    (2026-09-01 실제 발생: 현금 $0.36 -> 매수 6건 각 $0.06)."""
+    orders = [
+        TargetOrder(ticker="AMD", side="buy", notional=0.06),
+        TargetOrder(ticker="XOM", side="buy", notional=0.06),
+        TargetOrder(ticker="AAPL", side="buy", notional=30.0),  # 정상
+    ]
+    result = enforce_order_caps(orders, nav=1000.0, max_position_weight=0.05)
+    assert [o.ticker for o in result] == ["AAPL"]
+
+
 def test_enforce_order_caps_preserves_valid_orders_alongside_blocked_ones():
     orders = [
         TargetOrder(ticker="AAPL", side="buy", notional=30.0),  # 통과

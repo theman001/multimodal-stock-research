@@ -47,6 +47,14 @@ from src.rl.trading_env import MAX_POSITION_WEIGHT
 HARD_ORDER_NOTIONAL_CAP_RATIO = 0.10
 DAILY_LOSS_KILL_SWITCH_RATIO = 0.05  # 전일 대비 NAV가 이 비율 이상 하락하면 신규 BUY 중단
 RECONCILIATION_TOLERANCE_RATIO = 0.02  # 마지막 기록 NAV 대비 이 비율 넘게 브로커 상태가 다르면 중단
+# 이 금액 미만의 BUY notional은 주문을 내지 않는다. allocation.py 의
+# equal_share = cash_after_sells / len(buy_tickers) 는 현금이 거의 없을 때
+# (예: 이미 풀투자 상태 + 잔여 현금 $0.36) 종목당 $0.06 같은 값을 만든다 —
+# Alpaca 는 최소 $1 미만 notional 주문을 거부하고(HTTP 4xx), 그러면
+# execute_us 가 크래시해 그날 사이클이 막힌다(2026-09-01 실제 발생).
+# KR(원화)에선 실질 배분이 늘 이 값을 크게 넘어 무해하고, KIS 는
+# execute_kr 이 "1주도 못 사면 skip"으로 한 번 더 거른다.
+MIN_BUY_NOTIONAL = 1.0
 
 
 @dataclass
@@ -253,6 +261,10 @@ def enforce_order_caps(
     for order in orders:
         if order.side != "buy":
             safe_orders.append(order)
+            continue
+        if order.notional < MIN_BUY_NOTIONAL:
+            # 사실상 $0 주문(잔여 현금이 거의 없을 때 생김) — 브로커가 거부해
+            # execute 사이클을 통째로 막는다(MIN_BUY_NOTIONAL docstring 참고).
             continue
         if order.notional > policy_cap + epsilon or order.notional > hard_cap + epsilon:
             continue
