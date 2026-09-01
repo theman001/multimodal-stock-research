@@ -57,6 +57,13 @@ class _FakeBroker(BrokerAdapter):
     def is_market_open(self):
         return self._market_open
 
+    def count_open_orders(self):
+        return 0  # 이 페이크는 place_market_order 가 즉시 체결로 동작
+
+    def wait_until_orders_settle(self, timeout_s=180.0, poll_s=5.0):
+        # 테스트에선 실제 대기 없이 폴링 로직만 검증(타임아웃도 짧게)
+        return super().wait_until_orders_settle(timeout_s=0.05, poll_s=0.001)
+
 
 def _write_decision(data_root, target_date, orders):
     path = decision_path(data_root, target_date)

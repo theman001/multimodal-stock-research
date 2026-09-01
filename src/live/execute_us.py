@@ -131,6 +131,20 @@ def run_execute(
                     result = broker.place_market_order(order.ticker, "buy", notional=order.notional)
                 results.append(result)
 
+            # 시장가라도 개장 정각 opening cross 중엔 즉시 체결되지 않는다 —
+            # 여기서 안 기다리면 아래 get_positions()/get_cash()가 체결 전
+            # 스냅샷을 잡아 state 에 저장되고, 다음날 재구성 체크가 100%
+            # 불일치로 오판한다(2026-08-31 실제 발생). 주문을 실제로 낸
+            # 경우에만 기다린다.
+            if results:
+                unsettled = broker.wait_until_orders_settle()
+                if unsettled:
+                    send_notification(
+                        f"[US] execute({target_date.date()}): {unsettled}건이 제한시간 내 미체결 — "
+                        "state 스냅샷이 부정확할 수 있음(다음 실행의 재구성 체크가 막힐 수 있음)",
+                        level="warning",
+                    )
+
             final_positions = broker.get_positions()
             final_cash = broker.get_cash()
             final_nav = broker.get_nav()

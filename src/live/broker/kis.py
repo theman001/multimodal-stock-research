@@ -71,6 +71,7 @@ _TOKEN_EXPIRY_BUFFER_SECONDS = 60  # 만료 시각 직전 재사용해 요청 �
 
 _BALANCE_PATH = "/uapi/domestic-stock/v1/trading/inquire-balance"
 _ORDER_PATH = "/uapi/domestic-stock/v1/trading/order-cash"
+_OPEN_ORDERS_PATH = "/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl"
 _HASHKEY_PATH = "/uapi/hashkey"
 _PRICE_PATH = "/uapi/domestic-stock/v1/quotations/inquire-price"
 _TOKEN_PATH = "/oauth2/tokenP"
@@ -79,6 +80,7 @@ _TOKEN_PATH = "/oauth2/tokenP"
 _TR_ID_BALANCE = {"paper": "VTTC8434R", "live": "TTTC8434R"}
 _TR_ID_BUY = {"paper": "VTTC0802U", "live": "TTTC0802U"}
 _TR_ID_SELL = {"paper": "VTTC0801U", "live": "TTTC0801U"}
+_TR_ID_OPEN_ORDERS = {"paper": "VTTC8036R", "live": "TTTC8036R"}  # 정정취소가능주문조회 — 재확인 필요
 _TR_ID_CURRENT_PRICE = "FHKST01010100"  # 조회성 TR이라 모의/실전 공통으로 추정 — 재확인 필요
 
 _ORDER_DVSN_MARKET = "01"  # 시장가
@@ -350,3 +352,29 @@ class KISBroker(BrokerAdapter):
         if now_kst.dayofweek >= 5:  # 5=토, 6=일
             return False
         return _is_within_market_hours(now_kst)
+
+    def count_open_orders(self) -> int:
+        """정정취소가능주문조회(TR_ID VTTC8036R/TTTC8036R — 재확인 필요, 모듈
+        docstring 참고)로 아직 미체결로 열려 있는 주문 수를 센다. execute_kr.py
+        가 주문 제출 후 체결을 기다린 다음 state 를 저장하도록 하기 위함
+        (US 트랙에서 이 절차 없이 저장했다가 다음날 재구성 체크가 오판한
+        일이 있었음 — base.py `count_open_orders` docstring 참고). 페이지네이션은
+        무시한다 — 이 프로젝트의 하루 주문 수(<=120)면 첫 페이지로 충분하다."""
+        params = {
+            "CANO": self.cano,
+            "ACNT_PRDT_CD": self.acnt_prdt_cd,
+            "INQR_DVSN_1": "0",
+            "INQR_DVSN_2": "0",
+            "CTX_AREA_FK100": "",
+            "CTX_AREA_NK100": "",
+        }
+        resp = self._session.get(
+            self._url(_OPEN_ORDERS_PATH),
+            params=params,
+            headers=self._auth_headers(_TR_ID_OPEN_ORDERS[self.mode]),
+            timeout=self.timeout,
+        )
+        _raise_for_status_with_body(resp)
+        data = resp.json()
+        _check_rt_cd(data)
+        return len(data.get("output", []))

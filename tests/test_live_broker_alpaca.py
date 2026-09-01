@@ -117,6 +117,20 @@ def test_is_market_open_parses_clock_response(paper_env, monkeypatch):
     assert mock_get.call_args.args[0].endswith("/v2/clock")
 
 
+def test_count_open_orders_returns_length_of_open_orders_list(paper_env, monkeypatch):
+    mock_get = MagicMock(return_value=_FakeResponse([{"id": "o1"}, {"id": "o2"}, {"id": "o3"}]))
+    monkeypatch.setattr(requests.Session, "get", mock_get)
+    broker = AlpacaBroker(mode="paper")
+    assert broker.count_open_orders() == 3
+    assert mock_get.call_args.args[0].endswith("/v2/orders")
+    assert mock_get.call_args.kwargs["params"]["status"] == "open"
+
+
+def test_count_open_orders_zero_when_all_settled(paper_env, monkeypatch):
+    monkeypatch.setattr(requests.Session, "get", MagicMock(return_value=_FakeResponse([])))
+    assert AlpacaBroker(mode="paper").count_open_orders() == 0
+
+
 def test_place_market_order_with_notional(paper_env, monkeypatch):
     mock_post = MagicMock(
         return_value=_FakeResponse(

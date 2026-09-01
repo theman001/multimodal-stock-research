@@ -14,6 +14,7 @@ observation.py 구현 중(Phase 4 2단계) `unrealized_return` 계산에 평단�
 """
 from __future__ import annotations
 
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Literal
@@ -98,3 +99,25 @@ class BrokerAdapter(ABC):
 
     @abstractmethod
     def is_market_open(self) -> bool: ...
+
+    @abstractmethod
+    def count_open_orders(self) -> int:
+        """아직 체결/취소/거부되지 않고 열려 있는 주문 수. `place_market_order()`는
+        시장가라도 "접수"만 확인하고 체결을 보장하지 않는다 — 특히 개장 정각의
+        opening cross 중에는 즉시 체결되지 않는다. execute_*.py 가 주문 제출
+        직후 `get_positions()`/`get_cash()` 를 찍어 state 로 저장하면 체결 전
+        스냅샷이 남고, 다음날 아침 재구성 체크가 "기록 vs 현실" 100% 불일치로
+        오판한다(2026-08-31 실제 발생 — decide_us 가 이 이유로 멈춤)."""
+
+    def wait_until_orders_settle(self, timeout_s: float = 180.0, poll_s: float = 5.0) -> int:
+        """열린 주문이 모두 정리(체결/취소/거부)될 때까지 폴링한다. 남은
+        미체결 주문 수를 반환 — 0이 아니면 timeout_s 안에 다 안 끝난 것.
+        execute_*.py 가 최종 state 스냅샷 직전에 호출한다(모듈 docstring 참고).
+        `count_open_orders()` 자체가 실패하면(브로커 조회 오류) 예외를 그대로
+        올린다 — 이 시점의 조회 실패는 state 정확성에 직결되므로 삼키지 않는다."""
+        deadline = time.monotonic() + timeout_s
+        while True:
+            n = self.count_open_orders()
+            if n == 0 or time.monotonic() >= deadline:
+                return n
+            time.sleep(poll_s)

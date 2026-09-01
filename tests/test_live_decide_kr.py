@@ -49,6 +49,9 @@ class _FakeBroker(BrokerAdapter):
     def is_market_open(self):
         return self._market_open
 
+    def count_open_orders(self):
+        return 0
+
 
 class _DeterministicModelV3:
     """실제 model_v3.json을 로드하지 않는 결정적 스텁(tests/test_live_observation.py와 동일 패턴)."""

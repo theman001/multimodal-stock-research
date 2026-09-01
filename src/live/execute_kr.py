@@ -163,6 +163,18 @@ def run_execute(
                 detail = "; ".join(f"{t}: {e!r}" for t, e in buy_failures)
                 send_notification(f"[KR] 매수 {len(buy_failures)}건 처리 실패(현재가 조회/주문): {detail}", level="warning")
 
+            # 주문 제출 후 체결을 기다린 다음 최종 스냅샷을 잡는다 — 안 그러면
+            # 체결 전 상태가 state 에 저장돼 다음날 재구성 체크가 오판한다
+            # (US 트랙에서 2026-08-31 실제 발생, base.py count_open_orders 참고).
+            if results:
+                unsettled = broker.wait_until_orders_settle()
+                if unsettled:
+                    send_notification(
+                        f"[KR] execute({target_date.date()}): {unsettled}건이 제한시간 내 미체결 — "
+                        "state 스냅샷이 부정확할 수 있음(다음 실행의 재구성 체크가 막힐 수 있음)",
+                        level="warning",
+                    )
+
             final_positions = broker.get_positions()
             final_cash = broker.get_cash()
             final_nav = broker.get_nav()

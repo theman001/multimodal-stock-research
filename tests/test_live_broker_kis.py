@@ -60,15 +60,21 @@ def _post_dispatcher(order_payload=None, hashkey_payload=None, token_payload=Non
     return _dispatch
 
 
-def _get_dispatcher(balance_payload=None, price_payload=None):
+_OPEN_ORDERS_PAYLOAD = {"rt_cd": "0", "msg1": "정상", "output": [{"odno": "1"}, {"odno": "2"}]}
+
+
+def _get_dispatcher(balance_payload=None, price_payload=None, open_orders_payload=None):
     balance_payload = balance_payload or _BALANCE_PAYLOAD
     price_payload = price_payload or _PRICE_PAYLOAD
+    open_orders_payload = open_orders_payload or _OPEN_ORDERS_PAYLOAD
 
     def _dispatch(url, *args, **kwargs):
         if url.endswith("/uapi/domestic-stock/v1/trading/inquire-balance"):
             return _FakeResponse(balance_payload)
         if url.endswith("/uapi/domestic-stock/v1/quotations/inquire-price"):
             return _FakeResponse(price_payload)
+        if url.endswith("/uapi/domestic-stock/v1/trading/inquire-psbl-rvsecncl"):
+            return _FakeResponse(open_orders_payload)
         raise AssertionError(f"예상치 못한 GET 호출: {url}")
 
     return _dispatch
@@ -133,6 +139,21 @@ def test_get_positions_parses_and_filters_zero_qty(kis_env, monkeypatch):
     positions = broker.get_positions()
     assert positions == {"005930": HeldPosition(qty=10.0, avg_entry_price=70000.0)}
     assert "000660" not in positions  # hldg_qty=0인 과거 보유 종목은 제외
+
+
+def test_count_open_orders_counts_revocable_orders(kis_env, monkeypatch):
+    """정정취소가능주문조회(VTTC8036R)로 아직 열려 있는 주문 수를 센다 —
+    execute_kr.py 가 체결 대기용으로 호출한다."""
+    monkeypatch.setattr(requests.Session, "post", MagicMock(side_effect=_post_dispatcher()))
+    monkeypatch.setattr(requests.Session, "get", MagicMock(side_effect=_get_dispatcher()))
+    assert KISBroker(mode="paper").count_open_orders() == 2
+
+    monkeypatch.setattr(
+        requests.Session,
+        "get",
+        MagicMock(side_effect=_get_dispatcher(open_orders_payload={"rt_cd": "0", "msg1": "정상", "output": []})),
+    )
+    assert KISBroker(mode="paper").count_open_orders() == 0
 
 
 def test_get_current_price_parses_stck_prpr(kis_env, monkeypatch):

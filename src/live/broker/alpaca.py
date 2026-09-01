@@ -200,3 +200,15 @@ class AlpacaBroker(BrokerAdapter):
         resp = self._session.get(self._url("/clock"), timeout=self.timeout)
         _raise_for_status_with_body(resp)
         return bool(resp.json()["is_open"])
+
+    def count_open_orders(self) -> int:
+        """`status=open` 은 Alpaca 에서 new/accepted/partially_filled/pending_*
+        등 아직 종료되지 않은 주문을 모두 포함한다(filled/canceled/rejected/
+        expired 는 제외). `nested=false` 로 브래킷 하위주문 중복집계를 피한다."""
+        resp = self._session.get(
+            self._url("/orders"),
+            params={"status": "open", "limit": 500, "nested": "false"},
+            timeout=self.timeout,
+        )
+        _raise_for_status_with_body(resp)
+        return len(resp.json())

@@ -12,13 +12,17 @@ from src.live.safety import LiveState, load_state, save_state
 
 
 class _FakeBroker(BrokerAdapter):
-    def __init__(self, positions=None, cash=1000.0, nav=1000.0, market_open=True):
+    def __init__(self, positions=None, cash=1000.0, nav=1000.0, market_open=True, open_orders_seq=None):
         super().__init__(mode="paper")
         self._positions = positions or {}
         self._cash = cash
         self._nav = nav
         self._market_open = market_open
+        # 폴링 호출마다 하나씩 소비되는 미체결 주문 수 시퀀스(마지막 값은 반복).
+        # None 이면 즉시 체결(0)로 동작 — 대부분의 테스트가 이 경우.
+        self._open_orders_seq = list(open_orders_seq) if open_orders_seq is not None else None
         self.orders_submitted: list[tuple] = []
+        self.settle_polls = 0
 
     def get_positions(self):
         return dict(self._positions)
@@ -41,6 +45,18 @@ class _FakeBroker(BrokerAdapter):
 
     def is_market_open(self):
         return self._market_open
+
+    def count_open_orders(self):
+        self.settle_polls += 1
+        if self._open_orders_seq is None:
+            return 0
+        if len(self._open_orders_seq) > 1:
+            return self._open_orders_seq.pop(0)
+        return self._open_orders_seq[0]
+
+    def wait_until_orders_settle(self, timeout_s=180.0, poll_s=5.0):
+        # 테스트에선 실제 대기 없이 폴링 로직만 검증(타임아웃도 짧게)
+        return super().wait_until_orders_settle(timeout_s=0.05, poll_s=0.001)
 
 
 def _write_decision(data_root, target_date, orders):
@@ -181,6 +197,38 @@ def test_run_execute_updates_state_after_execution_preserving_nav_anchor(tmp_pat
     assert new_state.nav_anchor == pytest.approx(1000.0)  # 배포 기준선은 절대 안 바뀜
     assert "AAPL" in new_state.positions
     assert new_state.cash == pytest.approx(960.0)  # 1000 - 40(주문 notional)
+
+
+def test_run_execute_waits_for_fills_before_snapshotting_state(tmp_path):
+    """시장가라도 개장 정각엔 즉시 체결되지 않는다 — 체결 전에 state 를
+    저장하면 다음날 재구성 체크가 100% 불일치로 오판한다(2026-08-31 실제
+    발생: cash 100000 vs 0.36). 주문 제출 후 미체결이 0이 될 때까지 폴링한
+    뒤에 스냅샷해야 한다."""
+    save_state(tmp_path, "us", LiveState(positions={}, cash=1000.0, nav=1000.0, nav_anchor=1000.0, updated_at="2024-01-01"))
+    _write_decision(tmp_path, TARGET_DATE, [{"ticker": "AAPL", "side": "buy", "notional": 40.0, "market_id": 0}])
+    broker = _FakeBroker(positions={}, cash=1000.0, nav=1000.0, open_orders_seq=[1, 1, 0])
+
+    run_execute(mode="paper", data_root=tmp_path, target_date=TARGET_DATE, broker=broker)
+
+    assert broker.settle_polls >= 3  # 0을 볼 때까지 실제로 폴링했다
+
+
+def test_run_execute_warns_when_orders_do_not_settle_in_time(tmp_path):
+    """제한시간 내 미체결이 남으면 경고 알림을 보낸다 — state 스냅샷이
+    부정확할 수 있고 다음 실행의 재구성 체크가 막힐 수 있으므로."""
+    save_state(tmp_path, "us", LiveState(positions={}, cash=1000.0, nav=1000.0, nav_anchor=1000.0, updated_at="2024-01-01"))
+    _write_decision(tmp_path, TARGET_DATE, [{"ticker": "AAPL", "side": "buy", "notional": 40.0, "market_id": 0}])
+    broker = _FakeBroker(positions={}, cash=1000.0, nav=1000.0, open_orders_seq=[2])  # 영원히 2건 미체결
+
+    calls = []
+    original = execute_us_module.send_notification
+    execute_us_module.send_notification = lambda text, level="info": calls.append((text, level))
+    try:
+        run_execute(mode="paper", data_root=tmp_path, target_date=TARGET_DATE, broker=broker)
+    finally:
+        execute_us_module.send_notification = original
+
+    assert any(level == "warning" and "미체결" in text for text, level in calls)
 
 
 def test_run_execute_rejects_live_mode(tmp_path):
