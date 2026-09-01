@@ -309,10 +309,9 @@ def test_run_execute_sends_info_notification_after_actually_executing(tmp_path):
     finally:
         execute_us_module.send_notification = original
 
-    assert len(calls) == 1
-    text, level = calls[0]
-    assert level == "info"
-    assert "execute 완료" in text
+    assert [lvl for _, lvl in calls] == ["info", "info"]  # 시작 핑 + 완료
+    assert any("execute 시작" in t for t, _ in calls)
+    assert any("execute 완료" in t for t, _ in calls)
 
 
 def test_run_execute_sends_error_notification_on_reconciliation_failure_and_still_raises(tmp_path):

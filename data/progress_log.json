@@ -1,6 +1,6 @@
 {
   "phase": "4",
-  "last_completed_step": "phase4_us_first_manual_dry_run_bugfixes",
+  "last_completed_step": "phase4_us_live_run_fixes_and_alerts",
   "steps": [
     {
       "step": "us_data_collection",
@@ -511,9 +511,15 @@
       "status": "done",
       "timestamp": "2026-08-28T08:33:47.723745+00:00",
       "output": "US 트랙 decide_us.py 첫 수동 end-to-end 실행(모의계좌 실 API + 11일치 증분 수집)에서 실제 버그 2건 발견·수정. (1) score_events.py: 문서단위 감성 캐시(raw/us/events/sentiment/*.json)가 git 미커밋이라 새 환경에서 매 실행이 US 7,966건 전체를 FinBERT CPU 재스코어링(2h15m 관측) — 커밋돼 있는 events_sentiment_{us,kr}.parquet 자체를 캐시로 함께 쓰도록 _load_prior_scores() 추가, 진짜 신규 문서만 모델에 넣음. events_sentiment_us.parquet 7,944->7,966 갱신. (2) decide_us.py/decide_kr.py: 관측 target_date를 _kst_today()(KST 캘린더 날짜)로 넘겨 07:00 KST 실행 시 아직 안 열린 당일 장을 관측하려다 'features.parquet에 오늘자 행 없음'으로 크래시 — 관측일=수집 데이터의 마지막 거래일(_latest_{us,kr}_trading_day())로 분리, 결정 파일명/execute 핸드오프는 그대로 KST 날짜 유지. 기존 테스트들이 target_date=ohlcv.max()로 손수 우회 중이라 실 cron 경로가 미검증이었음. 회귀 테스트 3건 추가(test_score_events 2 + test_live_decide_us 1). pytest tests/ 400개 전체 통과. decide_us 재실행 성공 — 결정 파일 정상 생성(33건 매수, NAV $100k Alpaca 모의계좌)."
+    },
+    {
+      "step": "phase4_us_live_run_fixes_and_alerts",
+      "status": "done",
+      "timestamp": "2026-09-01T01:14:21.374053+00:00",
+      "output": "OMV(rock-5-itx) 무인 US 트랙 첫 실전 운영에서 발견/대응. (1) execute_us 가 22:30 KST 개장 정각에 26건 시장가 제출 직후 get_positions/get_cash 로 state 저장 -> opening cross 미체결 상태(현금 100000/포지션0)가 저장됐고 밤새 체결돼 계좌 $0.36 이 되자 다음날 decide 재구성 체크 100% 불일치로 정지. -> BrokerAdapter.count_open_orders()(Alpaca /v2/orders?status=open, KIS VTTC8036R) + wait_until_orders_settle() 추가, execute_us/kr 이 주문 후 미체결 0 될 때까지 폴링(<=3분) 후 스냅샷, 미체결 잔존시 warning. (2) 스케줄별 Mattermost 가시성: decide/execute 에 '시작' 핑 추가('시작'만 오고 '완료'/'실패' 없으면 OOM kill/컨테이너 재시작 등 조용한 중단 감지), src/live/self_update.py 신규(06:00 cron, git reset --hard + pip, 신규커밋/실패시만 알림), 컨테이너 기동 핑을 compose entrypoint 에 추가. 회귀 테스트 +11(총 411). deploy/docker-compose.yml 갱신(self_update cron, $ 없는 스크립트, FETCH_HEAD). 커밋 7a93023 외 후속."
     }
   ],
-  "next_action": "US 트랙: decide_us/execute_us 코드 검증 완료(첫 수동 실행에서 버그 2건 수정, 파이프라인 end-to-end 정상). 무인 cron 운영 시작은 여전히 별도 사용자 승인 필요 — cron_us.txt 설치 시 그날 22:30 KST부터 실제 모의주문 집행. KR 트랙: 코드는 동일 버그 2건 함께 수정했으나 KIS 모의투자 계좌-앱키 불일치(msg_cd 90070000, '모의투자 처리계좌의 ID와 사용자정보가 상이')가 블로커 — 사용자가 KIS Developers에서 앱키 발급 HTS ID와 모의계좌 소유 HTS ID 일치/상시모의투자 참가신청 여부 확인 필요.",
+  "next_action": "US 트랙 무인 운영 중(OMV). 8/31 execute 미체결-대기 버그로 계좌가 stuck 상태 — 사용자가 복구 절차 실행 필요(state_us.json 삭제 + decide 재실행으로 실제 Alpaca 계좌 상태 재부트스트랩). 수정 코드는 06:00 self_update 또는 스택 Down/Up 로 반영. KR 트랙은 KIS 계좌-앱키 불일치(msg_cd 90070000) 미해결로 여전히 대기.",
   "blockers": [
     "KR: KIS 모의투자 계좌-앱키 불일치 — inquire-balance가 msg_cd 90070000으로 거부(토큰 발급·현재가 조회는 정상). 사용자가 KIS 웹에서 계좌/앱키 HTS ID 일치 및 상시모의투자 참가신청 확인 필요",
     "US/KR 공통: cron 미설치 — 무인 모의투자 운영 시작은 별도 명시적 승인 필요(CLAUDE.md Phase 4 DoD)"

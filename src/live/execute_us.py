@@ -119,6 +119,14 @@ def run_execute(
             orders = _load_us_orders(decision_path(data_root, target_date))
             safe_orders = enforce_order_caps(orders, nav=nav)
 
+            # 스케줄 시작 핑 — 하루 1번(장 개장 확인 + 아직 미체결일 때만 여기
+            # 도달). "시작"만 오고 "완료"/"실패"가 없으면 집행 중 조용히 멈춘 것.
+            n_buy = sum(1 for o in safe_orders if o.side == "buy")
+            n_sell = sum(1 for o in safe_orders if o.side == "sell")
+            send_notification(
+                f"[US] execute 시작({target_date.date()}): 매수 {n_buy}건/매도 {n_sell}건 집행", level="info"
+            )
+
             for order in safe_orders:
                 if order.side == "sell":
                     pos = current_positions.get(order.ticker)

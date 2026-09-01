@@ -318,10 +318,10 @@ def test_run_decide_sends_error_notification_on_reconciliation_failure_and_still
     finally:
         decide_us_module.send_notification = original
 
-    assert len(calls) == 1
-    text, level = calls[0]
-    assert level == "error"
-    assert "decide_us 실패" in text
+    errors = [(t, lvl) for t, lvl in calls if lvl == "error"]
+    assert len(errors) == 1
+    assert "decide_us 실패" in errors[0][0]
+    assert any("decide 시작" in t for t, _ in calls)  # 스케줄 시작 핑도 함께
 
 
 def test_run_decide_sends_info_notification_on_success(data_root):
@@ -342,12 +342,12 @@ def test_run_decide_sends_info_notification_on_success(data_root):
     finally:
         decide_us_module.send_notification = original
 
-    assert len(calls) == 1
-    text, level = calls[0]
-    assert level == "info"
-    assert "decide 완료" in text
+    assert [lvl for _, lvl in calls] == ["info", "info"]  # 시작 핑 + 완료
+    assert any("decide 시작" in t for t, _ in calls)
+    done = [t for t, _ in calls if "decide 완료" in t]
+    assert len(done) == 1
     # 포트폴리오 스냅샷 한 줄 — 매일 이 알림으로 모의투자 현황을 훑을 수 있어야 함
-    assert "NAV $" in text and "누적" in text and "보유" in text
+    assert "NAV $" in done[0] and "누적" in done[0] and "보유" in done[0]
 
 
 def test_run_decide_second_call_same_day_blocked_by_lock_if_concurrent(data_root):

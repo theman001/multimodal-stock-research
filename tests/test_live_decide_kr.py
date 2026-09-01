@@ -299,10 +299,10 @@ def test_run_decide_sends_error_notification_on_reconciliation_failure_and_still
     finally:
         decide_kr_module.send_notification = original
 
-    assert len(calls) == 1
-    text, level = calls[0]
-    assert level == "error"
-    assert "decide_kr 실패" in text
+    errors = [(t, lvl) for t, lvl in calls if lvl == "error"]
+    assert len(errors) == 1
+    assert "decide_kr 실패" in errors[0][0]
+    assert any("decide 시작" in t for t, _ in calls)
 
 
 def test_run_decide_sends_info_notification_on_success(data_root):
@@ -323,10 +323,9 @@ def test_run_decide_sends_info_notification_on_success(data_root):
     finally:
         decide_kr_module.send_notification = original
 
-    assert len(calls) == 1
-    text, level = calls[0]
-    assert level == "info"
-    assert "decide 완료" in text
+    assert [lvl for _, lvl in calls] == ["info", "info"]  # 시작 핑 + 완료
+    assert any("decide 시작" in t for t, _ in calls)
+    assert any("decide 완료" in t for t, _ in calls)
 
 
 def test_run_decide_second_call_same_day_blocked_by_lock_if_concurrent(data_root):

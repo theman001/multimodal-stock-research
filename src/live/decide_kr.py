@@ -94,6 +94,9 @@ def run_decide(
 
     try:
         with acquire_run_lock(data_root, "decide_kr"):
+            # 스케줄 시작 핑 — "시작"은 왔는데 "완료"/"실패"가 안 오면 파이프라인이
+            # 조용히 멈춘 것(OOM kill·컨테이너 재시작 등 예외 핸들러도 못 타는 경우).
+            send_notification(f"[KR] decide 시작({target_date.date()})", level="info")
             current_positions = broker.get_positions()
             current_cash = broker.get_cash()
             current_nav_from_broker = broker.get_nav()
