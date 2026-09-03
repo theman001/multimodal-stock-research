@@ -12,6 +12,8 @@ OMV(GUI 전용) 배포에서 터미널로 `git pull` 을 칠 수 없으므로, �
 """
 from __future__ import annotations
 
+import glob
+import os
 import subprocess
 import sys
 
@@ -23,6 +25,14 @@ def _run(*args: str) -> str:
 
 
 def run() -> None:
+    # git 이 중간에 죽어 남긴 stale lock 을 먼저 치운다 — 단일 컨테이너라
+    # 동시 git 실행이 없으므로 남아 있는 lock 은 항상 stale 이다(컨테이너
+    # recreate 가 git 을 끊었을 때 발생, 2026-09-03 실제로 shallow.lock 로 막힘).
+    for lock in glob.glob(".git/*.lock"):
+        try:
+            os.remove(lock)
+        except OSError:
+            pass
     try:
         before = _run("git", "rev-parse", "HEAD")
         _run("git", "fetch", "-q", "--depth", "1", "origin", "main")
