@@ -70,7 +70,14 @@ class LiveState:
     상태를 "오늘 이미 실행됨"으로 착각해 그날의 첫 실행을 건너뛰게 된다
     (execute_us.py 구현 중 실제로 발견한 버그) — `last_executed_date`는
     execute_us.py가 주문을 실제로 제출한 뒤에만 그날 날짜(KST, "YYYY-MM-DD")로
-    세팅한다."""
+    세팅한다.
+
+    `pending_settle`: execute_*.py 가 주문을 냈는데 제한시간(wait_until_orders_settle)
+    안에 다 체결되지 않은 채 스냅샷을 저장했다는 표시. 이 값이 True면 이
+    state 의 positions/cash/nav 는 부정확할 수 있다 — 이후 execute 폴(10분
+    간격)이나 다음 decide 가 `resync_state_if_settled()` 로 브로커에서 다시
+    읽어 정확히 맞추고 플래그를 내린다. 안 그러면 지연 체결분이 다음날
+    아침 재구성 체크에서 6% 괴리로 잡혀 decide 가 멈춘다(2026-09-02 실제 발생)."""
 
     positions: dict[str, HeldPosition] = field(default_factory=dict)
     cash: float = 0.0
@@ -78,6 +85,7 @@ class LiveState:
     nav_anchor: float = 1.0
     updated_at: str | None = None
     last_executed_date: str | None = None
+    pending_settle: bool = False
 
 
 def _state_path(data_root: Path, track: str) -> Path:
@@ -96,8 +104,9 @@ def load_state(data_root: Path, track: str) -> LiveState | None:
         nav=payload["nav"],
         nav_anchor=payload["nav_anchor"],
         updated_at=payload["updated_at"],
-        # .get(): 이 필드가 생기기 전에 저장된 state.json과의 하위호환.
+        # .get(): 이 필드들이 생기기 전에 저장된 state.json과의 하위호환.
         last_executed_date=payload.get("last_executed_date"),
+        pending_settle=payload.get("pending_settle", False),
     )
 
 
@@ -111,6 +120,7 @@ def save_state(data_root: Path, track: str, state: LiveState) -> None:
         "nav_anchor": state.nav_anchor,
         "updated_at": state.updated_at,
         "last_executed_date": state.last_executed_date,
+        "pending_settle": state.pending_settle,
     }
     fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
     with os.fdopen(fd, "w") as f:
@@ -137,6 +147,33 @@ def load_or_bootstrap_state(
     )
     save_state(data_root, track, state)
     return state
+
+
+def resync_state_if_settled(broker, data_root: Path, track: str, state: LiveState) -> LiveState:
+    """직전 execute 가 미체결을 남겨(`state.pending_settle`) positions/cash/nav
+    스냅샷이 부정확할 수 있다 — 지연 체결이 이제 다 끝났으면 브로커에서 정확한
+    값을 다시 읽어 저장하고 플래그를 내린 새 state 를 반환한다. 아직 미체결이
+    남았거나 애초에 pending 이 아니면 받은 state 를 그대로 돌려준다.
+
+    decide_*.py 와 execute_*.py 가 재구성 체크 직전에 호출한다 — 그래야
+    지연 체결분이 다음날 아침 재구성 6% 괴리로 잡혀 decide 가 멈추는 걸
+    막는다(2026-09-02 실제 발생). `last_executed_date`/`nav_anchor` 는 그대로
+    보존한다(재트레이드 여부·기준선은 바뀌지 않음)."""
+    if not state.pending_settle:
+        return state
+    if broker.count_open_orders() > 0:
+        return state  # 아직 체결 진행 중 — 다음 폴에서 다시 시도
+    fresh = LiveState(
+        positions=broker.get_positions(),
+        cash=broker.get_cash(),
+        nav=broker.get_nav(),
+        nav_anchor=state.nav_anchor,
+        updated_at=datetime.now(timezone.utc).isoformat(),
+        last_executed_date=state.last_executed_date,
+        pending_settle=False,
+    )
+    save_state(data_root, track, fresh)
+    return fresh
 
 
 def _pid_alive(pid: int) -> bool:

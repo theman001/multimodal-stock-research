@@ -30,7 +30,14 @@ from src.live.broker.alpaca import AlpacaBroker
 from src.live.broker.base import BrokerAdapter, OrderResult
 from src.live.decide_us import MARKET_ID_US, decision_path
 from src.live.notify import send_notification
-from src.live.safety import LiveState, acquire_run_lock, enforce_order_caps, load_or_bootstrap_state, save_state
+from src.live.safety import (
+    LiveState,
+    acquire_run_lock,
+    enforce_order_caps,
+    load_or_bootstrap_state,
+    resync_state_if_settled,
+    save_state,
+)
 
 
 def _kst_today() -> pd.Timestamp:
@@ -103,6 +110,16 @@ def run_execute(
                 # 이 판단에 쓰면 안 된다(safety.py의 LiveState.last_executed_date
                 # docstring 참고 — 실제로 그렇게 짰다가 그날의 첫 실행을 건너뛰는
                 # 버그를 냈었음).
+                # 재트레이드는 안 하되, 직전 실행이 미체결을 남겼으면(pending_settle)
+                # 이 10분 간격 폴이 브로커에서 정확한 상태를 다시 읽어 맞춘다 —
+                # 지연 체결분이 다음날 아침 재구성 체크를 막는 걸 방지(2026-09-02).
+                resynced = resync_state_if_settled(broker, data_root, "us", state)
+                if state.pending_settle and not resynced.pending_settle:
+                    send_notification(
+                        f"[US] 지연 체결 완료 — state 재동기화(현금 {resynced.cash:,.2f}, "
+                        f"보유 {sum(1 for p in resynced.positions.values() if p.qty != 0)}종목)",
+                        level="info",
+                    )
                 return []
 
             executed = True
@@ -144,14 +161,13 @@ def run_execute(
             # 스냅샷을 잡아 state 에 저장되고, 다음날 재구성 체크가 100%
             # 불일치로 오판한다(2026-08-31 실제 발생). 주문을 실제로 낸
             # 경우에만 기다린다.
-            if results:
-                unsettled = broker.wait_until_orders_settle()
-                if unsettled:
-                    send_notification(
-                        f"[US] execute({target_date.date()}): {unsettled}건이 제한시간 내 미체결 — "
-                        "state 스냅샷이 부정확할 수 있음(다음 실행의 재구성 체크가 막힐 수 있음)",
-                        level="warning",
-                    )
+            unsettled = broker.wait_until_orders_settle() if results else 0
+            if unsettled:
+                send_notification(
+                    f"[US] execute({target_date.date()}): {unsettled}건이 제한시간 내 미체결 — "
+                    "state 를 pending 으로 표시, 이후 execute 폴이 재동기화함",
+                    level="warning",
+                )
 
             final_positions = broker.get_positions()
             final_cash = broker.get_cash()
@@ -169,6 +185,9 @@ def run_execute(
                     # 완료했다"는 사실 자체는 기록한다 — 그래야 같은 날 나머지
                     # 폴링에서 반복적으로 재구성 체크/락 경합을 하지 않는다.
                     last_executed_date=str(target_date.date()),
+                    # 제한시간 내 미체결이 남았으면 이 스냅샷은 부정확 — 이후
+                    # execute 폴이 resync_state_if_settled()로 맞춘다.
+                    pending_settle=unsettled > 0,
                 ),
             )
     except Exception as e:

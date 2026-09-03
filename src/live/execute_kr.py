@@ -30,7 +30,14 @@ from src.live.broker.base import BrokerAdapter, OrderResult
 from src.live.broker.kis import KISBroker
 from src.live.decide_kr import MARKET_ID_KR, decision_path
 from src.live.notify import send_notification
-from src.live.safety import LiveState, acquire_run_lock, enforce_order_caps, load_or_bootstrap_state, save_state
+from src.live.safety import (
+    LiveState,
+    acquire_run_lock,
+    enforce_order_caps,
+    load_or_bootstrap_state,
+    resync_state_if_settled,
+    save_state,
+)
 
 
 def _kst_today() -> pd.Timestamp:
@@ -99,6 +106,15 @@ def run_execute(
                 # load_or_bootstrap_state()의 최초 부트스트랩에서도 "지금"으로 찍히므로
                 # 이 판단에 쓰면 안 된다(safety.py의 LiveState.last_executed_date
                 # docstring 참고).
+                # 재트레이드는 안 하되, 직전 실행이 미체결을 남겼으면 이 폴이
+                # 브로커에서 정확한 상태를 다시 읽어 맞춘다(execute_us.py와 동일).
+                resynced = resync_state_if_settled(broker, data_root, "kr", state)
+                if state.pending_settle and not resynced.pending_settle:
+                    send_notification(
+                        f"[KR] 지연 체결 완료 — state 재동기화(현금 {resynced.cash:,.0f}원, "
+                        f"보유 {sum(1 for p in resynced.positions.values() if p.qty != 0)}종목)",
+                        level="info",
+                    )
                 return []
 
             executed = True
@@ -173,15 +189,14 @@ def run_execute(
 
             # 주문 제출 후 체결을 기다린 다음 최종 스냅샷을 잡는다 — 안 그러면
             # 체결 전 상태가 state 에 저장돼 다음날 재구성 체크가 오판한다
-            # (US 트랙에서 2026-08-31 실제 발생, base.py count_open_orders 참고).
-            if results:
-                unsettled = broker.wait_until_orders_settle()
-                if unsettled:
-                    send_notification(
-                        f"[KR] execute({target_date.date()}): {unsettled}건이 제한시간 내 미체결 — "
-                        "state 스냅샷이 부정확할 수 있음(다음 실행의 재구성 체크가 막힐 수 있음)",
-                        level="warning",
-                    )
+            # (US 트랙에서 2026-08-31/09-02 실제 발생, base.py count_open_orders 참고).
+            unsettled = broker.wait_until_orders_settle() if results else 0
+            if unsettled:
+                send_notification(
+                    f"[KR] execute({target_date.date()}): {unsettled}건이 제한시간 내 미체결 — "
+                    "state 를 pending 으로 표시, 이후 execute 폴이 재동기화함",
+                    level="warning",
+                )
 
             final_positions = broker.get_positions()
             final_cash = broker.get_cash()
@@ -199,6 +214,7 @@ def run_execute(
                     # 완료했다"는 사실 자체는 기록한다 — 그래야 같은 날 나머지
                     # 폴링에서 반복적으로 재구성 체크/락 경합을 하지 않는다.
                     last_executed_date=str(target_date.date()),
+                    pending_settle=unsettled > 0,
                 ),
             )
     except Exception as e:

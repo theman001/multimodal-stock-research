@@ -229,6 +229,42 @@ def test_run_execute_warns_when_orders_do_not_settle_in_time(tmp_path):
         execute_us_module.send_notification = original
 
     assert any(level == "warning" and "미체결" in text for text, level in calls)
+    # 미체결이 남았으면 state 를 pending 으로 표시해야 한다 — 이후 폴이 재동기화
+    assert load_state(tmp_path, "us").pending_settle is True
+
+
+def test_subsequent_poll_resyncs_state_after_delayed_fills(tmp_path):
+    """execute 가 미체결로 끝나 state.pending_settle=True 로 저장된 뒤, 10분
+    간격 다음 폴은 재트레이드는 안 하되 브로커에서 정확한 상태를 다시 읽어
+    맞춘다(2026-09-02: SELL 2건이 3분 뒤 체결돼 현금 275->6201, 다음날
+    decide 재구성 6% 괴리로 정지한 걸 방지)."""
+    save_state(
+        tmp_path, "us",
+        LiveState(
+            positions={}, cash=275.19, nav=99170.0, nav_anchor=100000.0,
+            updated_at="2026-09-02", last_executed_date=str(TARGET_DATE.date()), pending_settle=True,
+        ),
+    )
+    _write_decision(tmp_path, TARGET_DATE, [{"ticker": "AAPL", "side": "buy", "notional": 40.0, "market_id": 0}])
+    # 이제 미체결 0, 계좌엔 지연 체결분이 반영됨
+    broker = _FakeBroker(
+        positions={"XOM": HeldPosition(qty=24.0, avg_entry_price=159.9)}, cash=6201.73, nav=99176.07
+    )
+
+    calls = []
+    original = execute_us_module.send_notification
+    execute_us_module.send_notification = lambda text, level="info": calls.append((text, level)) or True
+    try:
+        results = run_execute(mode="paper", data_root=tmp_path, target_date=TARGET_DATE, broker=broker)
+    finally:
+        execute_us_module.send_notification = original
+
+    assert results == [] and broker.orders_submitted == []  # 재트레이드 안 함
+    new_state = load_state(tmp_path, "us")
+    assert new_state.pending_settle is False
+    assert new_state.cash == pytest.approx(6201.73)
+    assert new_state.nav_anchor == pytest.approx(100000.0)  # 기준선 보존
+    assert any("재동기화" in t for t, _ in calls)
 
 
 def test_run_execute_rejects_live_mode(tmp_path):

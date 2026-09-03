@@ -40,6 +40,7 @@ from src.live.safety import (
     check_reconciliation,
     enforce_order_caps,
     load_or_bootstrap_state,
+    resync_state_if_settled,
 )
 
 CHECKPOINT_NAME = "rl_policy_v1"
@@ -105,6 +106,10 @@ def run_decide(
             current_nav_from_broker = broker.get_nav()
 
             state = load_or_bootstrap_state(data_root, "us", current_positions, current_cash, current_nav_from_broker)
+            # 직전 execute 가 지연 체결(pending_settle)을 남겼으면 브로커에서 정확한
+            # 상태를 다시 읽어 맞춘다 — 안 그러면 지연 체결분이 아래 재구성 체크에서
+            # 괴리로 잡혀 decide 가 멈춘다(2026-09-02 실제 발생).
+            state = resync_state_if_settled(broker, data_root, "us", state)
             check_reconciliation(current_positions, current_cash, state)
 
             collect_us(data_root)

@@ -10,8 +10,64 @@ from src.live.safety import (
     enforce_order_caps,
     load_or_bootstrap_state,
     load_state,
+    resync_state_if_settled,
     save_state,
 )
+
+
+class _StubBroker:
+    """resync_state_if_settled 가 쓰는 메서드만 있는 최소 스텁."""
+
+    def __init__(self, open_orders, positions, cash, nav):
+        self._open = open_orders
+        self._positions = positions
+        self._cash = cash
+        self._nav = nav
+
+    def count_open_orders(self):
+        return self._open
+
+    def get_positions(self):
+        return dict(self._positions)
+
+    def get_cash(self):
+        return self._cash
+
+    def get_nav(self):
+        return self._nav
+
+
+def test_resync_noop_when_not_pending(tmp_path):
+    state = LiveState(positions={}, cash=100.0, nav=100.0, nav_anchor=100.0, updated_at="x", pending_settle=False)
+    broker = _StubBroker(open_orders=0, positions={"AAPL": HeldPosition(9.9, 1.0)}, cash=999.0, nav=1099.0)
+    out = resync_state_if_settled(broker, tmp_path, "us", state)
+    assert out is state  # 손 안 댐
+
+
+def test_resync_waits_while_orders_still_open(tmp_path):
+    state = LiveState(positions={}, cash=100.0, nav=100.0, nav_anchor=100.0, updated_at="x", pending_settle=True)
+    broker = _StubBroker(open_orders=2, positions={}, cash=6201.0, nav=99000.0)
+    out = resync_state_if_settled(broker, tmp_path, "us", state)
+    assert out.pending_settle is True and out.cash == 100.0  # 아직 미체결 — 그대로
+
+
+def test_resync_rewrites_state_from_broker_once_settled(tmp_path):
+    save_state(
+        tmp_path, "us",
+        LiveState(positions={}, cash=275.19, nav=99170.0, nav_anchor=100000.0,
+                  updated_at="x", last_executed_date="2026-09-02", pending_settle=True),
+    )
+    state = load_state(tmp_path, "us")
+    broker = _StubBroker(
+        open_orders=0, positions={"XOM": HeldPosition(24.0, 159.9)}, cash=6201.73, nav=99176.07
+    )
+    out = resync_state_if_settled(broker, tmp_path, "us", state)
+
+    assert out.pending_settle is False
+    assert out.cash == pytest.approx(6201.73)
+    assert out.nav_anchor == pytest.approx(100000.0)  # 기준선 보존
+    assert out.last_executed_date == "2026-09-02"  # 재트레이드 여부 보존
+    assert load_state(tmp_path, "us").cash == pytest.approx(6201.73)  # 디스크에도 반영
 
 
 # ---------------------------------------------------------------------- #

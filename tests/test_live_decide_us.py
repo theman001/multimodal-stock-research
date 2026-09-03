@@ -241,6 +241,31 @@ def test_run_decide_raises_on_reconciliation_mismatch(data_root):
         run_decide(data_root=data_root, target_date=target_date, broker=broker)
 
 
+def test_run_decide_resyncs_pending_settle_state_instead_of_failing(data_root):
+    """직전 execute 가 지연 체결(pending_settle=True)로 부정확한 스냅샷을
+    남겼으면, decide 는 재구성 실패로 멈추지 말고 브로커에서 정확한 상태를
+    다시 읽어 맞춘 뒤 진행해야 한다(2026-09-02 실제로 이 경로에서 멈춤)."""
+    from src.live.safety import LiveState, load_state, save_state
+
+    ohlcv = pd.read_parquet(data_root / "processed" / "ohlcv_meta_us.parquet")
+    target_date = ohlcv["date"].max()
+
+    # 스냅샷은 현금 275(부정확) + pending, 브로커 실제는 6201 + 미체결 0
+    save_state(
+        data_root, "us",
+        LiveState(positions={}, cash=275.19, nav=99170.0, nav_anchor=100000.0,
+                  updated_at="2026-09-02", last_executed_date="2026-09-02", pending_settle=True),
+    )
+    broker = _FakeBroker(positions={}, cash=6201.73, nav=99176.07)
+
+    run_decide(data_root=data_root, target_date=target_date, broker=broker)  # 안 터져야 함
+
+    state = load_state(data_root, "us")
+    assert state.pending_settle is False
+    assert state.cash == pytest.approx(6201.73)
+    assert state.nav_anchor == pytest.approx(100000.0)
+
+
 def test_run_decide_suppresses_buys_when_kill_switch_triggers(data_root):
     """전일 대비 NAV가 크게 하락했으면 신규 BUY가 억제돼야 한다.
 
